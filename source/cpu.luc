@@ -1,0 +1,177 @@
+global Reg {
+  const A  = 4d0;
+  const B  = 4d1;
+  const C  = 4d2;
+  const D  = 4d3;
+  const X  = 4d4;
+  const Y  = 4d5;
+  const BP = 4d6;
+  const SP = 4d7;
+  const IRQ_FLAGS = 4d8;
+  const PC = 4d9;
+  const MM = 4d10;
+  const MP = 4d11;
+}
+
+module cpu (
+    input clk,  // clock
+    input rst,  // reset
+    input trap,          // trap reqeusted from I/O (read irq)
+    input  irq[8],       // IRQ signals from bus
+    input ready,         // ready pin (if 1, CPU will run)
+    output address[19],  // 19-bit memory address selector
+    output port[8],      // 8-bit I/O port selector
+    
+    input d_in[8],       // 8-bit data from memory (in)
+    output d_out[8],     // 8-bit data to memory (out)
+    output d_read,       // request read from memory
+    input  d_rdy,        // if 1, data is ready to be read 
+    output d_write,      // request write to memory
+    input io_in[8],      // I/O data in 
+    output io_out[8],    // I/O data out 
+    output io_read,
+    output io_write,
+    input io_rdy,        // if 1, I/O is ready to be read
+
+    /* debugging */    
+    
+    input dbe,             // debugger enabled
+    input dbg_reg_sel[4],  // register select
+    output dbg_reg_val[16] // output of the register being selected
+    
+  ) {
+
+  .clk(clk), .rst(rst) {
+    dff reg[12][16];     // 12 16-bit registers (alternatively 24 8-bit registers)
+    dff inst[4][8];      // 32-bit instruction
+    fsm state = { INIT, FETCH_1, FETCH_2, FETCH_3, FETCH_4, DECODE, EXECUTE, HALT };
+  }
+  
+  instLUT instLUT; 
+  memory_mapper mapper;
+  
+  sig instSize[2];
+  sig instOp[8];
+  sig fixup[1];
+    
+  always {
+    /* defaults */
+    address = mapper.mapped_address; // the exposed address should always be mapped w/ MM
+    port = 8hxx;                     // output port can float
+    d_out = 8hxx;                    // output data can float
+    io_out = 8hxx;                   // output IO data can float
+    d_write = 1b0;                   // no memory write request
+    d_read = 1b0;                    // no memory read request
+    io_write = 1b0;                  // no io write request
+    io_read = 1b0;                   // no io read request
+    mapper.address = 19hxxx;         // mapper's address can float when we're not asserting anything
+    mapper.mm = reg.q[Reg.MM][14:0]; // mapper's memory map is linked to register MM
+    
+    dbg_reg_val = reg.q[dbg_reg_sel];// output the selected register for debugging purposes
+    
+    instLUT.opcode = inst.q[0];      // wire up the first instruction byte to instLUT so we can calculate instruction size
+    instSize = instLUT.out[9:8];     // size is the top two bytes of instLUT's return
+    instOp = instLUT.out[7:0];       // actual opcode is the bottom eight bytes... or a FIXUP, in which case we have to 
+                                     // fix up PC & the opcode. 
+    
+    if (ready) {                     // ready means we are aren't waiting on any external resources (memory, etc.)
+      case (state.q) {
+        state.INIT:
+          reg.d[Reg.PC] = 16hFF00;   // Program Counter starts at 0xFF00 for bootstrap code (MMapped to 7FF00)
+          reg.d[Reg.MP] = 16hFF00;   // Memory Pointer is same as PC
+          reg.d[Reg.SP] = 16h2000;   // Stack Pointer is points at 0x2000
+          reg.d[Reg.BP] = 16h2000;   // Base Poiner also points at 0x2000
+          reg.d[Reg.MM] = 16b0111110001000001; // default memory mapping (page 3 = 31, page 2 = 2, page 1 = 1)
+          reg.d[Reg.IRQ_FLAGS] = c{8h0,8b01000000}; // Interrupts are DISABLED until the bootstrap code in ROM enablest them
+          reg.d[Reg.IRQ_FLAGS][4] = dbe;         // if debugger is enabled, single step by default
+          state.d = state.FETCH_1;   // start fetching instructions
+  
+        state.FETCH_1:
+          mapper.address = c{3b000, reg.q[Reg.MP]}; // assert mapped address on address output
+          d_read = 1b1;                             // request READ from memory
+          if(d_rdy) {                               // when data is available
+            reg.d[Reg.MP] = reg.q[Reg.MP] + 1;      // ... increment MP by one (ready for next byte, if needed)
+            inst.d[0] = d_in;                       // ... set the instruction's first byte to the data
+            inst.d[1] = 0;                          // ... clear the rest
+            inst.d[2] = 0;
+            inst.d[3] = 0;
+            instLUT.opcode = d_in;                  // ... set the opcode to see if we need to read more
+            if(instSize != InstWidth.ONE) {         
+              state.d = state.FETCH_2;              // ... ... instruction is more than one byte, keep reading
+            } else {
+              state.d = state.DECODE;               // ... ... instruction is complete, go to decoding
+            }
+          }
+          
+        state.FETCH_2:
+          mapper.address = c{3b000, reg.q[Reg.MP]}; // assert mapped address on address output
+          d_read = 1b1;                             // request READ from memory
+          if(d_rdy) {                               // when data is availabe
+            reg.d[Reg.MP] = reg.q[Reg.MP] + 1;      // ... increment MP by one (ready for next byte, if needed)
+            inst.d[1] = d_in;                       // ... populate second byte of instruction
+            instLUT.opcode = d_in;                  // ... set the opcode so we can see if we need to read more
+            if(instSize != InstWidth.TWO) {
+              state.d = state.FETCH_3;              // ... ... got another byte to go
+            } else {
+              state.d = state.DECODE;               // ... ... complete; decode!
+            }
+          }
+        state.FETCH_3:
+          mapper.address = c{3b000, reg.q[Reg.MP]}; // read another byte from mapped memory
+          d_read = 1b1;                             // request READ from memory
+          if(d_rdy) {                               // when data is available
+            reg.d[Reg.MP] = reg.q[Reg.MP] + 1;      // ... increment MP by one (ready for next byte, if needed)
+            inst.d[2] = d_in;                       // ... populate third byte of instruction
+            instLUT.opcode = d_in;                  // ... set the opcode 
+            if(instSize != InstWidth.THREE) {
+              state.d = state.FETCH_4;              // ... ... one final byte to go
+            } else {
+              state.d = state.DECODE;               // ... ... complete instruction; decode!
+            }
+          }
+        state.FETCH_4:
+          mapper.address = c{3b000, reg.q[Reg.MP]}; // read another byte from mapped memory
+          d_read = 1b1;                             // request READ from memory
+          if(d_rdy) {
+            reg.d[Reg.MP] = reg.q[Reg.MP] + 1;      // increment MP by one (ready for next byte, if needed)
+            inst.d[3] = d_in;                       // store final instruction byte
+            instLUT.opcode = d_in;
+            state.d = state.DECODE;                 // no instruction is longer than four bytes; go to decoding
+          }
+        state.DECODE:
+          reg.d[Reg.PC] = reg.q[Reg.MP];            // Move PC to match MP
+          fixup = 1b0;                              // signal if we need a fixup -- 0 means no
+          // fix ups -- need to account for having read too much of the instruction
+          case (instOp) {
+            Op.LD_FIXUP:                            // if loading absolute with AL-DL, need fixup
+              if (inst.q[1] == 8h00 && inst.q[0][0]) {
+                fixup = 1b1;
+              }
+            Op.LOOP_FIXUP:                          // if short flag is specified on LOOP or BR, fixup
+              if (inst.q[1][0]) {
+                fixup = 1b1;
+              }
+            Op.BR_FIXUP:
+              if (inst.q[1][0]) {
+                fixup = 1b1;
+              }
+          }
+          if (fixup) {
+            // move MP and PC back by one
+            reg.d[Reg.MP] = reg.q[Reg.MP] - 1;
+            reg.d[Reg.PC] = reg.q[Reg.MP] - 1;
+          }
+          state.d = state.EXECUTE;                  // we've got enough to continue
+        state.EXECUTE:
+          state.d = state.FETCH_1;                  // when done, go back to fetch the next instruction
+          if (dbe & reg.q[Reg.IRQ_FLAGS][4]) {      // unless debugger is attached and single step enabled
+            state.d = state.HALT;                   // ... in which case, halt
+          }
+        state.HALT:
+          if (trap & irq[7]) {                      // wait until trap asserted, IRQ has high bit, so NMI
+            state.d = state.FETCH_1;                // ... continue execution
+          }
+      }
+    }
+  }
+}

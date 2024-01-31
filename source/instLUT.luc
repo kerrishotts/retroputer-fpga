@@ -1,0 +1,372 @@
+global Op {
+  const NOP        = 8h00; // NOP
+  const ADD_D_S    = 8h01; // D = Dest Reg, S = Source Reg (both specified by four bits)
+  const SUB_D_S    = 8h02; 
+  const CMP_D_S    = 8h03;
+  const AND_D_S    = 8h04;
+  const OR_D_S     = 8h05;
+  const TEST_D_S   = 8h06;
+  const XOR_D_S    = 8h07;
+  const TRAP_IMMB  = 8h08; // IMMB = 8-bit immediate value (byte)
+  const NOT_NEG_EXC_FIXUP = 8h09;
+  const NOT_D      = 8h19;
+  const NEG_D      = 8h29;
+  const EXC_D      = 8hF9;
+  const SHL_D_IMMN = 8h0A; // IMMN = 4-bit immediate value (nybble)
+  const SHL_D_S    = 8h0B;
+  const SHR_D_IMMN = 8h0C;
+  const SHR_D_S    = 8h0D;
+  const SWAP_D_S   = 8h0E;
+  const MOV_D_S    = 8h0F;
+  const LD_FIXUP   = 8h10;
+  const LD_D_IMMW  = 8h12; // IMMW = 16-bit immediate value (word)
+  const LD_D_IMMB  = 8h13;
+  const LD_D_ADDR  = 8h14; // ADD = 19-bit address including addressing modes
+  const ST_S_ADDR  = 8h20;
+  const IN_D_IMMB  = 8h30;
+  const OUT_S_IMMB = 8h31;
+  const ENTER_IMMB = 8h38;
+  const EXIT_IMMB  = 8h39;
+  const HALT       = 8h3E;
+  const BRK        = 8h3F;
+  const TRAP_S     = 8h40;
+  const ADD_D_IMMW = 8h48;
+  const ADD_D_IMMB = 8h49;
+  const SUB_D_IMMW = 8h50;
+  const SUB_D_IMMB = 8h51;
+  const CMP_D_IMMW = 8h58;
+  const CMP_D_IMMB = 8h59;
+  const AND_D_IMMW = 8h60;
+  const AND_D_IMMB = 8h61;
+  const OR_D_IMMW  = 8h68;
+  const OR_D_IMMB  = 8h69;
+  const TEST_D_IMMW= 8h70;
+  const TEST_D_IMMB= 8h71;
+  const XOR_D_IMMW = 8h78;
+  const XOR_D_IMMB = 8h79;
+  const LOOP_FIXUP = 8h80;
+  const LOOP_ADDR  = 8h82;
+  const LOOPS_ADR  = 8h83; // ADR = 8-bit address including addressing modes
+  const BR_FIXUP   = 8h90;
+  const BR_ADDR    = 8h92;
+  const BRS_ADR    = 8h93;
+  const PUSHALL    = 8hA0;
+  const POPALL     = 8hA1;
+  const PUSHF      = 8hA2;
+  const POPF       = 8hA3;
+  const PUSHMM     = 8hA4;
+  const POPMM      = 8hA5;
+  const RET        = 8hA6;
+  const MUL_D_S    = 8hA8;
+  const DIV_D_S    = 8hA9;
+  const MOD_D_S    = 8hAA;
+  const SMUL_D_S   = 8hAB;
+  const SDIV_D_S   = 8hAC;
+  const SMOD_D_S   = 8hAD;
+  const FPU        = 8hAE;
+  const WAIT_IMMB  = 8hAF;
+  const SET_F      = 8hB0;
+  const CLR_F      = 8hB8;
+  const INC_D      = 8hC0;
+  const DEC_D      = 8hD0;
+  const PUSH_S     = 8hE0;
+  const POP_D      = 8hF0;
+  const INVALID    = 8hFF;
+}
+
+global InstWidth {
+  const ONE        = 2d0;
+  const TWO        = 2d1;
+  const THREE      = 2d2;
+  const FOUR       = 2d3;
+}
+
+module instLUT (
+    input opcode[8],
+    output out[10]  // 8 for op and 2 for size
+  ) {
+
+  
+  always {
+    out = c{InstWidth.ONE, 8h00};    // Size, Op. default to NOP and
+                                     // size is at least one so that an invalid operand doesn't freeze the processor
+     
+    case (opcode){
+      h00: out = c{InstWidth.ONE,   Op.NOP};
+      h01: out = c{InstWidth.TWO,   Op.ADD_D_S};
+      h02: out = c{InstWidth.TWO,   Op.SUB_D_S};
+      h03: out = c{InstWidth.TWO,   Op.CMP_D_S};
+      h04: out = c{InstWidth.TWO,   Op.AND_D_S};
+      h05: out = c{InstWidth.TWO,   Op.OR_D_S};
+      h06: out = c{InstWidth.TWO,   Op.TEST_D_S};
+      h07: out = c{InstWidth.TWO,   Op.XOR_D_S};
+      h08: out = c{InstWidth.TWO,   Op.TRAP_IMMB};
+      h09: out = c{InstWidth.TWO,   Op.NOT_NEG_EXC_FIXUP};
+      h0A: out = c{InstWidth.TWO,   Op.SHL_D_IMMN};
+      h0B: out = c{InstWidth.TWO,   Op.SHL_D_S};
+      h0C: out = c{InstWidth.TWO,   Op.SHR_D_IMMN};
+      h0D: out = c{InstWidth.TWO,   Op.SHR_D_S};
+      h0E: out = c{InstWidth.TWO,   Op.SWAP_D_S};
+      h0F: out = c{InstWidth.TWO,   Op.MOV_D_S};
+      
+      h10: out = c{InstWidth.FOUR,  Op.LD_FIXUP};
+      h11: out = c{InstWidth.FOUR,  Op.LD_FIXUP};
+      h12: out = c{InstWidth.FOUR,  Op.LD_FIXUP};
+      h13: out = c{InstWidth.FOUR,  Op.LD_FIXUP};
+      h14: out = c{InstWidth.FOUR,  Op.LD_FIXUP};
+      h15: out = c{InstWidth.FOUR,  Op.LD_FIXUP};
+      h16: out = c{InstWidth.FOUR,  Op.LD_FIXUP};
+      h17: out = c{InstWidth.FOUR,  Op.LD_FIXUP};
+      h18: out = c{InstWidth.FOUR,  Op.LD_FIXUP};
+      h19: out = c{InstWidth.FOUR,  Op.LD_FIXUP};
+      h1A: out = c{InstWidth.FOUR,  Op.LD_FIXUP};
+      h1B: out = c{InstWidth.FOUR,  Op.LD_FIXUP};
+      h1C: out = c{InstWidth.FOUR,  Op.LD_FIXUP};
+      h1D: out = c{InstWidth.FOUR,  Op.LD_FIXUP};
+      h1E: out = c{InstWidth.FOUR,  Op.LD_FIXUP};
+      h1F: out = c{InstWidth.FOUR,  Op.LD_FIXUP};
+      
+      h20: out = c{InstWidth.FOUR,  Op.ST_S_ADDR};
+      h21: out = c{InstWidth.FOUR,  Op.ST_S_ADDR};
+      h22: out = c{InstWidth.FOUR,  Op.ST_S_ADDR};
+      h23: out = c{InstWidth.FOUR,  Op.ST_S_ADDR};
+      h24: out = c{InstWidth.FOUR,  Op.ST_S_ADDR};
+      h25: out = c{InstWidth.FOUR,  Op.ST_S_ADDR};
+      h26: out = c{InstWidth.FOUR,  Op.ST_S_ADDR};
+      h27: out = c{InstWidth.FOUR,  Op.ST_S_ADDR};
+      h28: out = c{InstWidth.FOUR,  Op.ST_S_ADDR};
+      h29: out = c{InstWidth.FOUR,  Op.ST_S_ADDR};
+      h2A: out = c{InstWidth.FOUR,  Op.ST_S_ADDR};
+      h2B: out = c{InstWidth.FOUR,  Op.ST_S_ADDR};
+      h2C: out = c{InstWidth.FOUR,  Op.ST_S_ADDR};
+      h2D: out = c{InstWidth.FOUR,  Op.ST_S_ADDR};
+      h2E: out = c{InstWidth.FOUR,  Op.ST_S_ADDR};
+      h2F: out = c{InstWidth.FOUR,  Op.ST_S_ADDR};
+      
+      h30: out = c{InstWidth.TWO,   Op.IN_D_IMMB};
+      h31: out = c{InstWidth.TWO,   Op.OUT_S_IMMB};
+      h32: out = c{InstWidth.ONE,   Op.INVALID};
+      h33: out = c{InstWidth.ONE,   Op.INVALID};
+      h34: out = c{InstWidth.ONE,   Op.INVALID};
+      h35: out = c{InstWidth.ONE,   Op.INVALID};
+      h36: out = c{InstWidth.ONE,   Op.INVALID};
+      h37: out = c{InstWidth.ONE,   Op.INVALID};
+      h38: out = c{InstWidth.TWO,   Op.ENTER_IMMB};
+      h39: out = c{InstWidth.TWO,   Op.EXIT_IMMB};
+      h3A: out = c{InstWidth.ONE,   Op.INVALID};
+      h3B: out = c{InstWidth.ONE,   Op.INVALID};
+      h3C: out = c{InstWidth.ONE,   Op.INVALID};
+      h3D: out = c{InstWidth.ONE,   Op.INVALID};
+      h3E: out = c{InstWidth.ONE,   Op.BRK};
+      h3F: out = c{InstWidth.ONE,   Op.HALT};
+      
+      h40: out = c{InstWidth.ONE,   Op.TRAP_S};
+      h41: out = c{InstWidth.ONE,   Op.TRAP_S};
+      h42: out = c{InstWidth.ONE,   Op.TRAP_S};
+      h43: out = c{InstWidth.ONE,   Op.TRAP_S};
+      h44: out = c{InstWidth.ONE,   Op.TRAP_S};
+      h45: out = c{InstWidth.ONE,   Op.TRAP_S};
+      h46: out = c{InstWidth.ONE,   Op.TRAP_S};
+      h47: out = c{InstWidth.ONE,   Op.TRAP_S};
+      h48: out = c{InstWidth.THREE, Op.ADD_D_IMMW};
+      h49: out = c{InstWidth.TWO,   Op.ADD_D_IMMB};
+      h4A: out = c{InstWidth.THREE, Op.ADD_D_IMMW};
+      h4B: out = c{InstWidth.TWO,   Op.ADD_D_IMMB};
+      h4C: out = c{InstWidth.THREE, Op.ADD_D_IMMW};
+      h4D: out = c{InstWidth.TWO,   Op.ADD_D_IMMB};
+      h4E: out = c{InstWidth.THREE, Op.ADD_D_IMMW};
+      h4F: out = c{InstWidth.TWO,   Op.ADD_D_IMMB};
+      
+      h50: out = c{InstWidth.THREE, Op.SUB_D_IMMW};
+      h51: out = c{InstWidth.TWO,   Op.SUB_D_IMMB};
+      h52: out = c{InstWidth.THREE, Op.SUB_D_IMMW};
+      h53: out = c{InstWidth.TWO,   Op.SUB_D_IMMB};
+      h54: out = c{InstWidth.THREE, Op.SUB_D_IMMW};
+      h55: out = c{InstWidth.TWO,   Op.SUB_D_IMMB};
+      h56: out = c{InstWidth.THREE, Op.SUB_D_IMMW};
+      h57: out = c{InstWidth.TWO,   Op.SUB_D_IMMB};
+      h58: out = c{InstWidth.THREE, Op.CMP_D_IMMW};
+      h59: out = c{InstWidth.TWO,   Op.CMP_D_IMMB};
+      h5A: out = c{InstWidth.THREE, Op.CMP_D_IMMW};
+      h5B: out = c{InstWidth.TWO,   Op.CMP_D_IMMB};
+      h5C: out = c{InstWidth.THREE, Op.CMP_D_IMMW};
+      h5D: out = c{InstWidth.TWO,   Op.CMP_D_IMMB};
+      h5E: out = c{InstWidth.THREE, Op.CMP_D_IMMW};
+      h5F: out = c{InstWidth.TWO,   Op.CMP_D_IMMB};
+
+      h60: out = c{InstWidth.THREE, Op.AND_D_IMMW};
+      h61: out = c{InstWidth.TWO,   Op.AND_D_IMMB};
+      h62: out = c{InstWidth.THREE, Op.AND_D_IMMW};
+      h63: out = c{InstWidth.TWO,   Op.AND_D_IMMB};
+      h64: out = c{InstWidth.THREE, Op.AND_D_IMMW};
+      h65: out = c{InstWidth.TWO,   Op.AND_D_IMMB};
+      h66: out = c{InstWidth.THREE, Op.AND_D_IMMW};
+      h67: out = c{InstWidth.TWO,   Op.AND_D_IMMB};
+      h68: out = c{InstWidth.THREE, Op.OR_D_IMMW};
+      h69: out = c{InstWidth.TWO,   Op.OR_D_IMMB};
+      h6A: out = c{InstWidth.THREE, Op.OR_D_IMMW};
+      h6B: out = c{InstWidth.TWO,   Op.OR_D_IMMB};
+      h6C: out = c{InstWidth.THREE, Op.OR_D_IMMW};
+      h6D: out = c{InstWidth.TWO,   Op.OR_D_IMMB};
+      h6E: out = c{InstWidth.THREE, Op.OR_D_IMMW};
+      h6F: out = c{InstWidth.TWO,   Op.OR_D_IMMB};
+
+      h70: out = c{InstWidth.THREE, Op.TEST_D_IMMW};
+      h71: out = c{InstWidth.TWO,   Op.TEST_D_IMMB};
+      h72: out = c{InstWidth.THREE, Op.TEST_D_IMMW};
+      h73: out = c{InstWidth.TWO,   Op.TEST_D_IMMB};
+      h74: out = c{InstWidth.THREE, Op.TEST_D_IMMW};
+      h75: out = c{InstWidth.TWO,   Op.TEST_D_IMMB};
+      h76: out = c{InstWidth.THREE, Op.TEST_D_IMMW};
+      h77: out = c{InstWidth.TWO,   Op.TEST_D_IMMB};
+      h78: out = c{InstWidth.THREE, Op.XOR_D_IMMW};
+      h79: out = c{InstWidth.TWO,   Op.XOR_D_IMMB};
+      h7A: out = c{InstWidth.THREE, Op.XOR_D_IMMW};
+      h7B: out = c{InstWidth.TWO,   Op.XOR_D_IMMB};
+      h7C: out = c{InstWidth.THREE, Op.XOR_D_IMMW};
+      h7D: out = c{InstWidth.TWO,   Op.XOR_D_IMMB};
+      h7E: out = c{InstWidth.THREE, Op.XOR_D_IMMW};
+      h7F: out = c{InstWidth.TWO,   Op.XOR_D_IMMB};
+      
+      h80: out = c{InstWidth.FOUR,  Op.LOOP_FIXUP};
+      h81: out = c{InstWidth.FOUR,  Op.LOOP_FIXUP};
+      h82: out = c{InstWidth.FOUR,  Op.LOOP_FIXUP};
+      h83: out = c{InstWidth.FOUR,  Op.LOOP_FIXUP};
+      h84: out = c{InstWidth.FOUR,  Op.LOOP_FIXUP};
+      h85: out = c{InstWidth.FOUR,  Op.LOOP_FIXUP};
+      h86: out = c{InstWidth.FOUR,  Op.LOOP_FIXUP};
+      h87: out = c{InstWidth.FOUR,  Op.LOOP_FIXUP};
+      h88: out = c{InstWidth.FOUR,  Op.LOOP_FIXUP};
+      h89: out = c{InstWidth.FOUR,  Op.LOOP_FIXUP};
+      h8A: out = c{InstWidth.FOUR,  Op.LOOP_FIXUP};
+      h8B: out = c{InstWidth.FOUR,  Op.LOOP_FIXUP};
+      h8C: out = c{InstWidth.FOUR,  Op.LOOP_FIXUP};
+      h8D: out = c{InstWidth.FOUR,  Op.LOOP_FIXUP};
+      h8E: out = c{InstWidth.FOUR,  Op.LOOP_FIXUP};
+      h8F: out = c{InstWidth.FOUR,  Op.LOOP_FIXUP};
+
+      h90: out = c{InstWidth.FOUR,  Op.BR_FIXUP};
+      h91: out = c{InstWidth.FOUR,  Op.BR_FIXUP};
+      h92: out = c{InstWidth.FOUR,  Op.BR_FIXUP};
+      h93: out = c{InstWidth.FOUR,  Op.BR_FIXUP};
+      h94: out = c{InstWidth.FOUR,  Op.BR_FIXUP};
+      h95: out = c{InstWidth.FOUR,  Op.BR_FIXUP};
+      h96: out = c{InstWidth.FOUR,  Op.BR_FIXUP};
+      h97: out = c{InstWidth.FOUR,  Op.BR_FIXUP};
+      h98: out = c{InstWidth.FOUR,  Op.BR_FIXUP};
+      h99: out = c{InstWidth.FOUR,  Op.BR_FIXUP};
+      h9A: out = c{InstWidth.FOUR,  Op.BR_FIXUP};
+      h9B: out = c{InstWidth.FOUR,  Op.BR_FIXUP};
+      h9C: out = c{InstWidth.FOUR,  Op.BR_FIXUP};
+      h9D: out = c{InstWidth.FOUR,  Op.BR_FIXUP};
+      h9E: out = c{InstWidth.FOUR,  Op.BR_FIXUP};
+      h9F: out = c{InstWidth.FOUR,  Op.BR_FIXUP};
+      
+      hA0: out = c{InstWidth.ONE,   Op.PUSHALL};
+      hA1: out = c{InstWidth.ONE,   Op.POPALL};
+      hA2: out = c{InstWidth.ONE,   Op.PUSHF};
+      hA3: out = c{InstWidth.ONE,   Op.POPF};
+      hA4: out = c{InstWidth.ONE,   Op.PUSHMM};
+      hA5: out = c{InstWidth.ONE,   Op.POPMM};
+      hA6: out = c{InstWidth.ONE,   Op.RET};
+      hA7: out = c{InstWidth.ONE,   Op.INVALID};
+      
+      hA8: out = c{InstWidth.TWO,   Op.MUL_D_S};
+      hA9: out = c{InstWidth.TWO,   Op.DIV_D_S};
+      hAA: out = c{InstWidth.TWO,   Op.MOD_D_S};
+      hAB: out = c{InstWidth.TWO,   Op.SMUL_D_S};
+      hAC: out = c{InstWidth.TWO,   Op.SDIV_D_S};
+      hAD: out = c{InstWidth.TWO,   Op.SMOD_D_S};
+      hAE: out = c{InstWidth.ONE,   Op.FPU};
+      hAF: out = c{InstWidth.TWO,   Op.WAIT_IMMB};
+      
+      hB0: out = c{InstWidth.ONE,   Op.SET_F};
+      hB1: out = c{InstWidth.ONE,   Op.SET_F};
+      hB2: out = c{InstWidth.ONE,   Op.SET_F};
+      hB3: out = c{InstWidth.ONE,   Op.SET_F};
+      hB4: out = c{InstWidth.ONE,   Op.SET_F};
+      hB5: out = c{InstWidth.ONE,   Op.SET_F};
+      hB6: out = c{InstWidth.ONE,   Op.SET_F};
+      hB7: out = c{InstWidth.ONE,   Op.SET_F};
+      
+      hB8: out = c{InstWidth.ONE,   Op.CLR_F};
+      hB9: out = c{InstWidth.ONE,   Op.CLR_F};
+      hBA: out = c{InstWidth.ONE,   Op.CLR_F};
+      hBB: out = c{InstWidth.ONE,   Op.CLR_F};
+      hBC: out = c{InstWidth.ONE,   Op.CLR_F};
+      hBD: out = c{InstWidth.ONE,   Op.CLR_F};
+      hBE: out = c{InstWidth.ONE,   Op.CLR_F};
+      hBF: out = c{InstWidth.ONE,   Op.CLR_F};
+      
+      hC0: out = c{InstWidth.ONE,   Op.INC_D};
+      hC1: out = c{InstWidth.ONE,   Op.INC_D};
+      hC2: out = c{InstWidth.ONE,   Op.INC_D};
+      hC3: out = c{InstWidth.ONE,   Op.INC_D};
+      hC4: out = c{InstWidth.ONE,   Op.INC_D};
+      hC5: out = c{InstWidth.ONE,   Op.INC_D};
+      hC6: out = c{InstWidth.ONE,   Op.INC_D};
+      hC7: out = c{InstWidth.ONE,   Op.INC_D};
+      hC8: out = c{InstWidth.ONE,   Op.INC_D};
+      hC9: out = c{InstWidth.ONE,   Op.INC_D};
+      hCA: out = c{InstWidth.ONE,   Op.INC_D};
+      hCB: out = c{InstWidth.ONE,   Op.INC_D};
+      hCC: out = c{InstWidth.ONE,   Op.INC_D};
+      hCD: out = c{InstWidth.ONE,   Op.INC_D};
+      hCE: out = c{InstWidth.ONE,   Op.INC_D};
+      hCF: out = c{InstWidth.ONE,   Op.INC_D};
+     
+      hD0: out = c{InstWidth.ONE,   Op.DEC_D};
+      hD1: out = c{InstWidth.ONE,   Op.DEC_D};
+      hD2: out = c{InstWidth.ONE,   Op.DEC_D};
+      hD3: out = c{InstWidth.ONE,   Op.DEC_D};
+      hD4: out = c{InstWidth.ONE,   Op.DEC_D};
+      hD5: out = c{InstWidth.ONE,   Op.DEC_D};
+      hD6: out = c{InstWidth.ONE,   Op.DEC_D};
+      hD7: out = c{InstWidth.ONE,   Op.DEC_D};
+      hD8: out = c{InstWidth.ONE,   Op.DEC_D};
+      hD9: out = c{InstWidth.ONE,   Op.DEC_D};
+      hDA: out = c{InstWidth.ONE,   Op.DEC_D};
+      hDB: out = c{InstWidth.ONE,   Op.DEC_D};
+      hDC: out = c{InstWidth.ONE,   Op.DEC_D};
+      hDD: out = c{InstWidth.ONE,   Op.DEC_D};
+      hDE: out = c{InstWidth.ONE,   Op.DEC_D};
+      hDF: out = c{InstWidth.ONE,   Op.DEC_D};
+      
+      hE0: out = c{InstWidth.ONE,   Op.PUSH_S};
+      hE1: out = c{InstWidth.ONE,   Op.PUSH_S};
+      hE2: out = c{InstWidth.ONE,   Op.PUSH_S};
+      hE3: out = c{InstWidth.ONE,   Op.PUSH_S};
+      hE4: out = c{InstWidth.ONE,   Op.PUSH_S};
+      hE5: out = c{InstWidth.ONE,   Op.PUSH_S};
+      hE6: out = c{InstWidth.ONE,   Op.PUSH_S};
+      hE7: out = c{InstWidth.ONE,   Op.PUSH_S};
+      hE8: out = c{InstWidth.ONE,   Op.PUSH_S};
+      hE9: out = c{InstWidth.ONE,   Op.PUSH_S};
+      hEA: out = c{InstWidth.ONE,   Op.PUSH_S};
+      hEB: out = c{InstWidth.ONE,   Op.PUSH_S};
+      hEC: out = c{InstWidth.ONE,   Op.PUSH_S};
+      hED: out = c{InstWidth.ONE,   Op.PUSH_S};
+      hEE: out = c{InstWidth.ONE,   Op.PUSH_S};
+      hEF: out = c{InstWidth.ONE,   Op.PUSH_S};
+      
+      hF0: out = c{InstWidth.ONE,   Op.POP_D};      
+      hF1: out = c{InstWidth.ONE,   Op.POP_D};
+      hF2: out = c{InstWidth.ONE,   Op.POP_D};
+      hF3: out = c{InstWidth.ONE,   Op.POP_D};
+      hF4: out = c{InstWidth.ONE,   Op.POP_D};
+      hF5: out = c{InstWidth.ONE,   Op.POP_D};
+      hF6: out = c{InstWidth.ONE,   Op.POP_D};
+      hF7: out = c{InstWidth.ONE,   Op.POP_D};
+      hF8: out = c{InstWidth.ONE,   Op.POP_D};
+      hF9: out = c{InstWidth.ONE,   Op.POP_D};
+      hFA: out = c{InstWidth.ONE,   Op.POP_D};
+      hFB: out = c{InstWidth.ONE,   Op.POP_D};
+      hFC: out = c{InstWidth.ONE,   Op.POP_D};
+      hFD: out = c{InstWidth.ONE,   Op.POP_D};
+      hFE: out = c{InstWidth.ONE,   Op.POP_D};
+      hFF: out = c{InstWidth.ONE,   Op.POP_D};
+      
+    }
+    
+  }
+}

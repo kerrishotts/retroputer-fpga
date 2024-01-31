@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project name="retroputer" board="Alchitry Au" language="Lucid" version="3">
+  <files>
+    <src>instLUT.luc</src>
+    <component>pipeline.luc</component>
+    <src>cpu.luc</src>
+    <component>counter.luc</component>
+    <component>decoder.luc</component>
+    <src>memory_mapper.luc</src>
+    <component>lru_cache.luc</component>
+    <component>mig_wrapper.luc</component>
+    <src top="true">au_top.luc</src>
+    <src>multi_seven_seg.luc</src>
+    <component>reset_conditioner.luc</component>
+    <component>edge_detector.luc</component>
+    <src>seven_seg.luc</src>
+    <component>button_conditioner.luc</component>
+    <constraint lib="true">alchitry.acf</constraint>
+    <constraint lib="true">io.acf</constraint>
+    <constraint lib="true">au.xdc</constraint>
+    <core name="clk_wiz_0">
+      <src>clk_wiz_0.xci</src>
+      <stub>clk_wiz_0_stub.v</stub>
+    </core>
+    <core name="mig_7series_0">
+      <src>mig_7series_0.xci</src>
+      <stub>mig_7series_0_stub.v</stub>
+    </core>
+  </files>
+</project>

@@ -1,0 +1,7 @@
+.DS_STORE
+*.log
+build_output.log
+work/constraint
+work/project.tcl
+work/verilog
+work/vivado

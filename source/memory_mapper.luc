@@ -1,0 +1,30 @@
+module memory_mapper (
+    input address[19],
+    input mm[15],
+    output mapped_address[19]
+  ) {
+  
+  sig banks[3][5];
+  sig page[5];
+  sig mapped_page[5];
+
+  always {
+    mapped_address = 0;
+    
+    banks[2] = mm[14:10]; // third bank is mapped to bits 14-10 in MM
+    banks[1] = mm[9:5];   // second bank is mapped to bits 9-5 in MM 
+    banks[0] = mm[4:0];   // first bank is mapped to bits 4-0 in MM 
+    
+    page = address[18:14];
+    
+    mapped_page = page;
+    case (page) {
+      1: mapped_page = banks[0];
+      2: mapped_page = banks[1];
+      3: mapped_page = banks[2];
+      default: mapped_page = page;
+    }
+
+    mapped_address = c{mapped_page, address[13:0]};    
+  }
+}
