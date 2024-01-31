@@ -1,0 +1,102 @@
+global AluOps {
+  const NOP = 4h0;
+  const ADD = 4h1;
+  const SUB = 4h2;
+  const MUL = 4h3;
+  const DIV = 4h4;
+  const MOD = 4h5;
+  const SMUL = 4h6;
+  const SDIV = 4h7;
+  const SMOD = 4h8;
+  const NEG = 4h9;
+  const SHL = 4hA;
+  const SHR = 4hB;
+  const AND = 4hC;
+  const OR  = 4hD;
+  const XOR = 4hE;
+  const NOT = 4hF;
+}
+
+global AluSize {
+  const BYTE = 0;
+  const WORD = 1;
+}
+
+module alu (
+    input clk,  // clock
+    //input rst,  // reset
+    //output out
+    input a[16],               // operand A
+    input b[16],               // operand b 
+    input size_a[1],           // size of operand A
+    input size_b[1],           // size of operand B
+    input op[4],               // command to execute
+    input carry_in[1],         // carry flag (in)
+    output zero[1],            // zero flag
+    output carry[1],           // carry flag (out)
+    output negative[1],        // negative flag
+    output overflow[1],        // overflow flag
+    input size_r[1],           // expected size of result (8 or 16 bits)
+    output result[16]          // result of operation
+  ) {
+  
+  sig sign_a[1];
+  sig sign_b[1];
+  sig internal_negative[1];
+  sig internal_result[17];
+
+  always {
+    zero = 0;
+    carry = 0;
+    negative = 0;
+    overflow = 0;
+    internal_result = 0;
+    result = internal_result[15:0];
+    
+    sign_a = a[size_a ? 15 : 7];
+    sign_b = b[size_b ? 15 : 7];
+    
+    case (op) {
+      AluOps.ADD:
+        internal_result = a + b + carry_in;
+      AluOps.SUB:
+        internal_result = a - b + carry_in;
+      AluOps.MUL:
+        internal_result = a * b;
+      //AluOps.DIV:
+      //  internal_result = a / b;
+      AluOps.AND:
+        internal_result = a & b;
+      AluOps.OR:
+        internal_result = a | b;
+      AluOps.XOR:
+        internal_result = a ^ b;
+      AluOps.NOT:
+        internal_result = ~a;
+      AluOps.NEG:
+        internal_result = -a;
+      AluOps.SHL:
+        internal_result = a << (b & 8h3F);
+      AluOps.SHR:
+        internal_result = a >> (b & 7h3F);
+      // TODO: MOD, SMUL, SDIV, SMOD
+    }
+    
+    zero = internal_result == 0;
+    internal_negative = internal_result[15];
+    negative = internal_negative;
+    carry = size_r ? internal_result[16] : |internal_result[16:8];
+    
+    if ((op == AluOps.ADD || op == AluOps.MUL) && sign_a == sign_b) {
+      if (sign_a != internal_negative) {
+        overflow = 1;
+      }
+    }
+    if (op == AluOps.SUB && sign_a != sign_b) {
+      if (sign_a != internal_negative) {
+        overflow = 1;
+      }
+    }
+    
+  }
+}

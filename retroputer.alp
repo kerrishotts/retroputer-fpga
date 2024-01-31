@@ -5,6 +5,7 @@
     <component>pipeline.luc</component>
     <src>cpu.luc</src>
     <component>counter.luc</component>
+    <src>alu.luc</src>
     <component>decoder.luc</component>
     <src>memory_mapper.luc</src>
     <component>lru_cache.luc</component>
