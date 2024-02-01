@@ -37,7 +37,9 @@ module cpu (
     
     input dbe,             // debugger enabled
     input dbg_reg_sel[4],  // register select
-    output dbg_reg_val[16] // output of the register being selected
+    output dbg_reg_val[16],// output of the register being selected
+    input dbg_reg_data[16],// data to write into selected register 
+    input dbg_reg_write    // if set, write the data into the register
     
   ) {
 
@@ -45,6 +47,8 @@ module cpu (
     dff reg[12][16];     // 12 16-bit registers (alternatively 24 8-bit registers)
     dff inst[4][8];      // 32-bit instruction
     fsm state = { INIT, FETCH_1, FETCH_2, FETCH_3, FETCH_4, DECODE, EXECUTE, HALT };
+    
+    
   }
   
   instLUT instLUT; 
@@ -68,6 +72,9 @@ module cpu (
     mapper.mm = reg.q[Reg.MM][14:0]; // mapper's memory map is linked to register MM
     
     dbg_reg_val = reg.q[dbg_reg_sel];// output the selected register for debugging purposes
+    if (dbg_reg_write) {
+      reg.d[dbg_reg_sel] = dbg_reg_data;
+    }
     
     instLUT.opcode = inst.q[0];      // wire up the first instruction byte to instLUT so we can calculate instruction size
     instSize = instLUT.out[9:8];     // size is the top two bytes of instLUT's return
@@ -91,6 +98,7 @@ module cpu (
           d_read = 1b1;                             // request READ from memory
           if(d_rdy) {                               // when data is available
             reg.d[Reg.MP] = reg.q[Reg.MP] + 1;      // ... increment MP by one (ready for next byte, if needed)
+//            reg.d[Reg.PC] = reg.q[Reg.PC] + 1;      // ... increment MP by one (ready for next byte, if needed)
             inst.d[0] = d_in;                       // ... set the instruction's first byte to the data
             inst.d[1] = 0;                          // ... clear the rest
             inst.d[2] = 0;
@@ -108,8 +116,9 @@ module cpu (
           d_read = 1b1;                             // request READ from memory
           if(d_rdy) {                               // when data is availabe
             reg.d[Reg.MP] = reg.q[Reg.MP] + 1;      // ... increment MP by one (ready for next byte, if needed)
+//            reg.d[Reg.PC] = reg.q[Reg.PC] + 1;      // ... increment MP by one (ready for next byte, if needed)
             inst.d[1] = d_in;                       // ... populate second byte of instruction
-            instLUT.opcode = d_in;                  // ... set the opcode so we can see if we need to read more
+            //instLUT.opcode = d_in;                  // ... set the opcode so we can see if we need to read more
             if(instSize != InstWidth.TWO) {
               state.d = state.FETCH_3;              // ... ... got another byte to go
             } else {
@@ -121,8 +130,9 @@ module cpu (
           d_read = 1b1;                             // request READ from memory
           if(d_rdy) {                               // when data is available
             reg.d[Reg.MP] = reg.q[Reg.MP] + 1;      // ... increment MP by one (ready for next byte, if needed)
+//            reg.d[Reg.PC] = reg.q[Reg.PC] + 1;      // ... increment MP by one (ready for next byte, if needed)
             inst.d[2] = d_in;                       // ... populate third byte of instruction
-            instLUT.opcode = d_in;                  // ... set the opcode 
+            //instLUT.opcode = d_in;                  // ... set the opcode 
             if(instSize != InstWidth.THREE) {
               state.d = state.FETCH_4;              // ... ... one final byte to go
             } else {
@@ -133,9 +143,10 @@ module cpu (
           mapper.address = c{3b000, reg.q[Reg.MP]}; // read another byte from mapped memory
           d_read = 1b1;                             // request READ from memory
           if(d_rdy) {
-            reg.d[Reg.MP] = reg.q[Reg.MP] + 1;      // increment MP by one (ready for next byte, if needed)
+            reg.d[Reg.MP] = reg.q[Reg.MP] + 1;      // ... increment MP by one (ready for next byte, if needed)
+//            reg.d[Reg.PC] = reg.q[Reg.PC] + 1;      // increment MP by one (ready for next byte, if needed)
             inst.d[3] = d_in;                       // store final instruction byte
-            instLUT.opcode = d_in;
+            //instLUT.opcode = d_in;
             state.d = state.DECODE;                 // no instruction is longer than four bytes; go to decoding
           }
         state.DECODE:

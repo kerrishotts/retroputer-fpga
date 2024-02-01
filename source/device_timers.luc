@@ -1,0 +1,157 @@
+global Timer_modes {
+  const DISABLED = 0;
+  const ONE_SHOT = 1;
+  const MULTI_SHOT = 2;
+  const RANDOM = 3;
+}
+module device_timers (
+    input clk,  // clock
+    input rst,  // reset
+    input port_sel[4],               // port select
+    input io_in[8],               // data to write
+    output io_out[8],             // read data
+    input io_read,                // request to read from io 
+    input io_write,               // request to write to io 
+    output irq_service            // if set, fire an interrupt!
+  ) {
+  .clk(clk), .rst (rst) {
+    dff ms[17];                       // milliseconds counter
+    dff hs[4];                       // hundredths counter
+    dff temp[12][8];              // temporary storage so that we can consistently set timer values
+    dff rtc[4][8];                // real time clock consisting of hours, minutes, seconds, and hundredths
+    dff timer_read[5][16];        // read values for each of the four timers 
+    dff timer_read_read[5];          // if 1, timer has been read
+    dff timer_cur[5][16];         // current value for each timer
+    dff timer_dur[5][16];         // duration for each timer
+    dff timer_modes[5][2];        // each timer has a two-bit mode 
+    pn_gen rn;
+  }
+  var r, i;
+  
+  always {
+    io_out = 8hxx;
+    irq_service = 0;
+    rn.seed = 0;
+    rn.next = 0;
+    timer_modes.d[4] = Timer_modes.RANDOM;
+    
+    ms.d = ms.q + 1;                          // millisecond timer
+    if (ms.q >= 89999 /*81249*/) {                      // at 81.25MHz, 81250 ticks equals a millisecond
+      ms.d = 0;
+      hs.d = hs.q + 1;                        // add one to tick the hundredths timer
+
+      for (i=0;i<5;i++) {
+        case (timer_modes.q[i]) {
+          Timer_modes.ONE_SHOT:
+            if (timer_cur.q[i] < timer_dur.q[i]) {
+              timer_cur.d[i] = timer_cur.q[i] + 1;
+            } else {
+              timer_read.d[i] = timer_cur.q[i];
+              timer_cur.d[i] = 0;
+              timer_dur.d[i] = 0;
+              irq_service = 1;
+            }
+          Timer_modes.MULTI_SHOT:
+            if (timer_cur.q[i] < timer_dur.q[i]) {
+              timer_cur.d[i] = timer_cur.q[i] + 1;
+            } else {
+              timer_read.d[i] = timer_cur.q[i];
+              timer_cur.d[i] = 0;
+              irq_service = 1;
+            }
+          Timer_modes.RANDOM:
+            if (timer_read_read.q[i]) {
+              rn.next = 1;
+              timer_read.d[i] = rn.num[15:0];
+            }
+        }
+        timer_read_read.d[i] = 0;              // reset timer read detector to zero after we handle it
+      }
+        
+    }
+    if (hs.q >= 9) {
+      hs.d = 0;
+      rtc.d[3] = rtc.q[3] + 1;                // increment hundredths
+      if (rtc.q[3] >= 99) {                   // ... about to roll over?
+        rtc.d[3] = 0;                         // ... reset hundredths to zero
+        rtc.d[2] = rtc.q[2] + 1;              // ... increment seconds
+        if (rtc.q[2] >= 59) {                 // ... about to roll over?
+          rtc.d[2] = 0;                       // ... ... reset seconds to zero
+          rtc.d[1] = rtc.q[1] + 1;            // ... ... increment minutes
+          if (rtc.q[1] >= 59) {               // ... ... about to roll over?
+            rtc.d[1] = 0;                     // ... ... ... reset minutes to zero
+            rtc.d[0] = rtc.q[0] + 1;          // ... ... ... increment hours
+            if (rtc.q[0] >= 23) {             // ... ... ... about to roll over?
+              rtc.d[0] = 0;                   // ... ... ... ... reset hours to zer
+            }
+          }
+        }
+      }   
+    }
+    
+    
+    if (io_write) {
+      case (port_sel) {
+        4h0: rtc.d[4h0] = io_in;          // setting the real time clock occurs only when HOURS is written
+             rtc.d[4h1] = temp.q[4h1];
+             rtc.d[4h2] = temp.q[4h2];
+             rtc.d[4h3] = temp.q[4h3];
+        4h1: temp.d[4h1] = io_in;
+        4h2: temp.d[4h2] = io_in;
+        4h3: temp.d[4h3] = io_in;
+        4h4: timer_dur.d[0] = c{io_in, temp.q[4h5]};
+             timer_cur.d[0] = 0;
+        4h5: temp.d[4h5] = io_in;
+        4h6: timer_dur.d[1] = c{io_in, temp.q[4h7]};
+             timer_cur.d[1] = 0;
+        4h7: temp.d[4h7] = io_in;
+        4h8: timer_dur.d[2] = c{io_in, temp.q[4h9]};
+             timer_cur.d[2] = 0;
+        4h9: temp.d[4h9] = io_in;
+        4hA: timer_dur.d[3] = c{io_in, temp.q[4hB]};
+             timer_cur.d[3] = 0;
+        4hB: temp.d[4hB] = io_in;
+        4hC: timer_modes.d[0] = io_in[1:0];
+             timer_modes.d[1] = io_in[3:2];
+             timer_modes.d[2] = io_in[5:4];
+             timer_modes.d[3] = io_in[7:6];
+        4hF: rtc.d[0] = 0;
+             rtc.d[1] = 0;
+             rtc.d[2] = 0;
+             rtc.d[3] = 0;
+             for(r=0;r<5;r++) {
+               timer_modes.d[r] = Timer_modes.DISABLED;
+               timer_read.d[r] = 0;
+               timer_read_read.d[r] = 0;
+               timer_cur.d[r] = 0;
+               timer_dur.d[r] = 0;
+             }
+    }
+  
+    if (io_read) {
+      case (port_sel) {
+        4h0: io_out = rtc.q[0];                // might have to put a read hold on rtc to prevent issues on roll overs
+        4h1: io_out = rtc.q[1];
+        4h2: io_out = rtc.q[2];
+        4h3: io_out = rtc.q[3];
+        4h4: io_out = timer_read.q[0][15:8];   // high byte of timer clk 
+             timer_read_read.d[0] = 1;         // timer has been read!
+        4h5: io_out = timer_read.q[0][ 7:0];   // low byte of timer 0 
+        4h6: io_out = timer_read.q[1][15:8];   // high byte of timer 1
+             timer_read_read.d[1] = 1;         // timer has been read!
+        4h7: io_out = timer_read.q[1][ 7:0];   // low byte of timer 1
+        4h8: io_out = timer_read.q[2][15:8];   // high byte of timer 2 
+             timer_read_read.d[2] = 1;         // timer has been read!
+        4h9: io_out = timer_read.q[2][ 7:0];   // low byte of timer 2
+        4hA: io_out = timer_read.q[3][15:8];   // high byte of timer 3
+             timer_read_read.d[3] = 1;         // timer has been read!
+        4hB: io_out = timer_read.q[3][ 7:0];   // low byte of timer 3
+        4hC: io_out = c{timer_modes.q[3], timer_modes.q[2], timer_modes.q[1], timer_modes.q[0]};
+        4hD: io_out = timer_read.q[4][15:8];   // high byte of random 
+             timer_read_read.d[4] = 1;         // timer has been read!
+        4hE: io_out = timer_read.q[4][ 7:0];   // low byte of random
+        4hF: io_out = 0;                       // reset is always zero
+      }
+    }
+  }
+}

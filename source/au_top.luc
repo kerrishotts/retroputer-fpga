@@ -32,7 +32,7 @@ module au_top (
   
   clk_wiz_0 clk_wiz;
 
-  
+  rom rom;
   // DDR3 Interface - connect inouts directly
   mig_wrapper mig (.ddr3_dq(ddr3_dq), .ddr3_dqs_n(ddr3_dqs_n), .ddr3_dqs_p(ddr3_dqs_p) );
   
@@ -56,10 +56,34 @@ module au_top (
       multi_seven_seg seg;
       
       dff reg_select[4];
+      dff port_select[8];
+
+      #CLK_FREQ(81250000) {
+        reg_interface reg_interface;
+          #BAUD(1000000) {        // The baud rate of the uarts
+            uart_rx uart_rx;      // The uart required by the register interace
+            uart_tx uart_tx;      // The uart required by the register interace
+          }
+        }
+      device_timers timers;
     }
   }
   
   always {
+  /* register interface; setup from https://github.com/chuckb/AuHelloWorld/blob/main/fpga/source/au_top.luc */
+    usb_tx = uart_tx.tx;
+    uart_rx.rx = usb_rx;
+    uart_tx.block = 0;
+    uart_tx.new_data = reg_interface.new_tx_data;
+    uart_tx.data = reg_interface.tx_data;
+    reg_interface.tx_busy = uart_tx.busy;
+    reg_interface.new_rx_data = uart_rx.new_data;
+    reg_interface.rx_data = uart_rx.data;
+    reg_interface.regIn.drdy = 0;
+    reg_interface.regIn.data = 32bx;
+    
+
+    
   /* Clock Wizard Connections */
     clk_wiz.clk_in1 = clk; // 100MHz in
     clk_wiz.reset = !rst_n; // reset signal
@@ -87,7 +111,7 @@ module au_top (
     io_seg = 8hff;          // turn segments off
     io_sel = 4hf;           // select no digits
 
-    usb_tx = usb_rx;        // echo the serial data
+    //usb_tx = usb_rx;        // echo the serial data
     
     mig.mem_in = cache.mem_in;
     cache.mem_out = mig.mem_out;
@@ -104,13 +128,6 @@ module au_top (
 
     down_button_cond.in = io_button[2];
     down_edge_detector.in = down_button_cond.out;
-    if (up_edge_detector.out) {
-        reg_select.d = reg_select.q == 11 ? 0 : reg_select.q + 1; // wrap back to zero after 12 registers
-        
-    }
-    if (down_edge_detector.out) {
-        reg_select.d = reg_select.q == 0 ? 11 : reg_select.q - 1; // wrap back to 11 after going past first register
-    }
 
     nmi_button_cond.in = io_button[3];
     nmi_edge_detector.in = nmi_button_cond.out;
@@ -120,6 +137,11 @@ module au_top (
     
     led = c{2h00, io_button[0], io_button[1], io_button[2], io_button[3], io_dip[0][0], rst};
     
+    timers.port_sel = 4hx;
+    timers.io_in = 8hxx;
+    timers.io_read = 0;
+    timers.io_write = 0;
+    
     cpu.trap = 0;
     cpu.ready = 0;
     cpu.dbe = io_dip[0][0];     // DEBUG ENABLED is DIP SWITCH 0
@@ -128,41 +150,109 @@ module au_top (
     cpu.d_in = 8hxx;
     cpu.d_rdy = 0;
     cpu.io_rdy = 0;
+    cpu.dbg_reg_data = 16hxx;
+    cpu.dbg_reg_write = 0;
+    cpu.dbg_reg_sel = 4hx;
     
-    cpu.dbg_reg_sel = reg_select.q;
-    // show memory address on LEDs
-    io_led = {c{cache.rd_ready, cache.rd_data_valid, cache.wr_ready, 2b0, cpu.address[18:16]}, cpu.address[15:8], cpu.address[7:0]};
+    rom.addr = cpu.address[15:0]; // rom can be wired up to the lower 16 bits on the address line by default
     
-    seg.values = {cpu.dbg_reg_val[15:12], cpu.dbg_reg_val[11:8], cpu.dbg_reg_val[7:4], cpu.dbg_reg_val[3:0]}; // show selected register on IO 7Seg
-    seg.dots = reg_select.q;     // dots represent selected register for debugging
+    
+    seg.values = {4h0,4h0,4h0,4h0};
+    seg.dots = 4h0;
     io_seg = ~seg.seg;           // connect segments to the driver
     io_sel = ~seg.sel;           // connect digit select to the driver
-    
-    if (nmi_edge_detector.out) { // user pressed NMI button
-      cpu.trap = 1;              // tell the CPU it's had a trap
-      cpu.irq = 8hff;            // assert NMI, trap 127
+
+    case (io_dip[2][7:6]) {
+      2b00:
+        if (up_edge_detector.out) {
+            reg_select.d = reg_select.q == 11 ? 0 : reg_select.q + 1; // wrap back to zero after 12 registers    
+        }
+        if (down_edge_detector.out) {
+            reg_select.d = reg_select.q == 0 ? 11 : reg_select.q - 1; // wrap back to 11 after going past first register
+        }
+        cpu.dbg_reg_sel = reg_select.q;
+        
+        
+        // show memory address on LEDs
+        io_led = {c{cache.rd_ready, cache.rd_data_valid, cache.wr_ready, 2b0, cpu.address[18:16]}, cpu.address[15:8], cpu.address[7:0]};
+        
+        seg.values = {cpu.dbg_reg_val[15:12], cpu.dbg_reg_val[11:8], cpu.dbg_reg_val[7:4], cpu.dbg_reg_val[3:0]}; // show selected register on IO 7Seg
+        seg.dots = reg_select.q;     // dots represent selected register for debugging
+        if (nmi_edge_detector.out) { // user pressed NMI button
+          cpu.trap = 1;              // tell the CPU it's had a trap
+          cpu.irq = 8hff;            // assert NMI, trap 127
+        }
+      2b10:
+        if (up_edge_detector.out) {
+            port_select.d = port_select.q == 15 ? 0 : port_select.q + 1; // wrap back to zero after 16 ports    
+        }
+        if (down_edge_detector.out) {
+            port_select.d = port_select.q == 0 ? 15 : port_select.q - 1; // wrap back to 15 after going past first port
+        }
+        timers.port_sel = port_select.q[3:0];
+        timers.io_read = 1;
+        seg.values = {port_select.q[7:4], port_select.q[3:0], timers.io_out[7:4], timers.io_out[3:0]}; // show selected register on IO 7Seg
+        if (nmi_edge_detector.out) { // user pressed NMI button, write middle DIPs to IO
+          timers.io_in = io_dip[1];
+          timers.io_write = 1;
+        }
+
     }
+
+    
+    
+    /* handle register interface commands */
+    if (reg_interface.regOut.new_cmd) {
+      if (reg_interface.regOut.write) {
+        case (reg_interface.regOut.address[31:30]) {
+          2b10: // write i/o 
+            timers.io_write = 1;
+            timers.port_sel = reg_interface.regOut.address[3:0];
+            timers.io_in = reg_interface.regOut.data[7:0];
+          2b11: // write register 
+            cpu.dbg_reg_sel = reg_interface.regOut.address[3:0];
+            cpu.dbg_reg_data = reg_interface.regOut.data[15:0];          
+        }
+      } else {
+        case (reg_interface.regOut.address[31:30]) {
+          2b10: // read i/o 
+            timers.port_sel = reg_interface.regOut.address[3:0];
+            timers.io_read = 1;
+            reg_interface.regIn.data = timers.io_out;
+            reg_interface.regIn.drdy = 1;
+          2b11: // read register
+            cpu.dbg_reg_sel = reg_interface.regOut.address[3:0];
+            reg_interface.regIn.data = cpu.dbg_reg_val;
+            reg_interface.regIn.drdy = 1;
+        }
+      }
+    }     
     
     case (state.q) {
       state.RUN_CPU:
         cpu.ready = 1;
-        if (cpu.d_read) {
-          if (cache.rd_ready) {
-            cache.rd_cmd_valid = 1;
-            state.d = state.WAIT_READ;
+        if (cpu.d_read) {                    // CPU is requesting to read data from memory
+          if (&cpu.address[18:16]) {         // if the address is in bank 7 (111_xxxxxxxx_xxxxxxxx)
+            cpu.d_in = rom.out;              // get the byte from ROM and give it to the CPU
+            cpu.d_rdy = 1;                   // signal the CPU that it has data
+          } else {
+            if (cache.rd_ready) {            // otherwise it's asking to read from RAM... but that takes time
+              cache.rd_cmd_valid = 1;        // ... ask cache to read from address
+              state.d = state.WAIT_READ;     // ... and wait
+            }
           }
         }
-        if (cpu.d_write) {
-          if (cache.wr_ready) {
-            cache.wr_valid = 1;
+        if (cpu.d_write) {                   // requesting to write to memory
+          if (cache.wr_ready) {              // ... wait for the cache to be write ready 
+            cache.wr_valid = 1;              // ... notify cache to write the data; note no mask for ROM -- can't be read anyway.
           }
         }
-      state.WAIT_READ:
-        if (cache.rd_data_valid) {
-          cpu.ready = 1;
-          cpu.d_in = cache.rd_data;
-          cpu.d_rdy = 1;
-          state.d = state.RUN_CPU;
+      state.WAIT_READ:                       // Waiting for data from RAM
+        if (cache.rd_data_valid) {           // If data is available
+          cpu.ready = 1;                     // ... CPU can run 
+          cpu.d_in = cache.rd_data;          // ... send the data in
+          cpu.d_rdy = 1;                     // ... and notify CPU
+          state.d = state.RUN_CPU;           // ... move back to RUN CPU
         }
     }
 
