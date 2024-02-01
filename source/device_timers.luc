@@ -36,7 +36,7 @@ module device_timers (
     timer_modes.d[4] = Timer_modes.RANDOM;
     
     ms.d = ms.q + 1;                          // millisecond timer
-    if (ms.q >= 89999 /*81249*/) {                      // at 81.25MHz, 81250 ticks equals a millisecond
+    if (ms.q >= 90241 /*81249*/) {                      // at 81.25MHz, 81250 ticks equals a millisecond
       ms.d = 0;
       hs.d = hs.q + 1;                        // add one to tick the hundredths timer
 
@@ -59,16 +59,10 @@ module device_timers (
               timer_cur.d[i] = 0;
               irq_service = 1;
             }
-          Timer_modes.RANDOM:
-            if (timer_read_read.q[i]) {
-              rn.next = 1;
-              timer_read.d[i] = rn.num[15:0];
-            }
         }
-        timer_read_read.d[i] = 0;              // reset timer read detector to zero after we handle it
-      }
-        
+      }        
     }
+    
     if (hs.q >= 9) {
       hs.d = 0;
       rtc.d[3] = rtc.q[3] + 1;                // increment hundredths
@@ -88,7 +82,19 @@ module device_timers (
         }
       }   
     }
-    
+
+    /* random timers can be updated more than every millisecond */
+    for (i=0;i<5;i++) {
+      case (timer_modes.q[i]) {
+        Timer_modes.RANDOM:
+          if (timer_read_read.q[i]) {
+            rn.next = 1;
+            timer_read.d[i] = rn.num[15:0];
+          }
+      }
+      timer_read_read.d[i] = 0;              // reset timer read detector to zero after we handle it
+    }
+  
     
     if (io_write) {
       case (port_sel) {
@@ -126,6 +132,7 @@ module device_timers (
                timer_cur.d[r] = 0;
                timer_dur.d[r] = 0;
              }
+      }
     }
   
     if (io_read) {
@@ -153,5 +160,5 @@ module device_timers (
         4hF: io_out = 0;                       // reset is always zero
       }
     }
-  }
+ 
 }
