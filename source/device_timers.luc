@@ -55,7 +55,7 @@ module device_timers (
             if (timer_cur.q[i] < timer_dur.q[i]) {
               timer_cur.d[i] = timer_cur.q[i] + 1;
             } else {
-              timer_read.d[i] = timer_cur.q[i];
+              timer_read.d[i] = timer_read.q[i] + 1;
               timer_cur.d[i] = 0;
               irq_service = 1;
             }
