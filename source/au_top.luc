@@ -211,7 +211,8 @@ module au_top (
             timers.io_in = reg_interface.regOut.data[7:0];
           2b11: // write register 
             cpu.dbg_reg_sel = reg_interface.regOut.address[3:0];
-            cpu.dbg_reg_data = reg_interface.regOut.data[15:0];          
+            cpu.dbg_reg_data = reg_interface.regOut.data[15:0]; 
+            cpu.dbg_reg_write = 1;         
         }
       } else {
         case (reg_interface.regOut.address[31:30]) {
