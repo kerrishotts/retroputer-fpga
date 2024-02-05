@@ -1,36 +1,38 @@
 global AluOps {
-  const NOP = 4h0;
-  const ADD = 4h1;
-  const SUB = 4h2;
-  const MUL = 4h3;
-  const DIV = 4h4;
-  const MOD = 4h5;
-  const SMUL = 4h6;
-  const SDIV = 4h7;
-  const SMOD = 4h8;
-  const NEG = 4h9;
-  const SHL = 4hA;
-  const SHR = 4hB;
-  const AND = 4hC;
-  const OR  = 4hD;
-  const XOR = 4hE;
-  const NOT = 4hF;
+  const NOP = 5h00;
+  const ADD = 5h01;
+  const SUB = 5h02;
+  const MUL = 5h03;
+  const DIV = 5h04;
+  const MOD = 5h05;
+  const SMUL = 5h06;
+  const SDIV = 5h07;
+  const SMOD = 5h08;
+  const NEG = 5h09;
+  const SHL = 5h0A;
+  const SHR = 5h0B;
+  const AND = 5h0C;
+  const OR  = 5h0D;
+  const XOR = 5h0E;
+  const NOT = 5h0F;
+  const INC = 5h10;
+  const DEC = 5h11;
 }
 
 global AluSize {
-  const BYTE = 0;
-  const WORD = 1;
+  const BYTE = 1;
+  const WORD = 0;
 }
 
 module alu (
-    input clk,  // clock
+    //input clk,  // clock
     //input rst,  // reset
     //output out
     input a[16],               // operand A
     input b[16],               // operand b 
     input size_a[1],           // size of operand A
     input size_b[1],           // size of operand B
-    input op[4],               // command to execute
+    input op[5],               // command to execute
     input carry_in[1],         // carry flag (in)
     output zero[1],            // zero flag
     output carry[1],           // carry flag (out)
@@ -46,21 +48,19 @@ module alu (
   sig internal_result[17];
 
   always {
-    zero = 0;
-    carry = 0;
-    negative = 0;
-    overflow = 0;
-    internal_result = 0;
-    result = internal_result[15:0];
     
-    sign_a = a[size_a ? 15 : 7];
-    sign_b = b[size_b ? 15 : 7];
+    sign_a = a[size_a ? /* BYTE */ 7 : /* WORD */ 15];
+    sign_b = b[size_b ? /* BYTE */ 7 : /* WORD */ 15];
     
     case (op) {
+      AluOps.INC:
+        internal_result = a + 1;
+      AluOps.DEC:
+        internal_result = a - 1;
       AluOps.ADD:
-        internal_result = a + b + carry_in;
+        internal_result = a + b + c{16b0, carry_in};
       AluOps.SUB:
-        internal_result = a - b + carry_in;
+        internal_result = a - b + c{16b0, carry_in};
       AluOps.MUL:
         internal_result = a * b;
       //AluOps.DIV:
@@ -78,25 +78,26 @@ module alu (
       AluOps.SHL:
         internal_result = a << (b & 8h3F);
       AluOps.SHR:
-        internal_result = a >> (b & 7h3F);
+        internal_result = a >> (b & 8h3F);
       // TODO: MOD, SMUL, SDIV, SMOD
+      default:
+        internal_result = 0;
     }
     
     zero = internal_result == 0;
     internal_negative = internal_result[15];
     negative = internal_negative;
-    carry = size_r ? internal_result[16] : |internal_result[16:8];
+    carry = size_r ? /* BYTE */ |internal_result[16:8] : /* WORD */ internal_result[16];
     
     if ((op == AluOps.ADD || op == AluOps.MUL) && sign_a == sign_b) {
-      if (sign_a != internal_negative) {
-        overflow = 1;
-      }
+      overflow = sign_a != internal_negative ? 1 : 0;
+    } else if (op == AluOps.SUB && sign_a != sign_b) {
+      overflow = sign_a != internal_negative ? 1 : 0;
+    } else {
+      overflow = 0;
     }
-    if (op == AluOps.SUB && sign_a != sign_b) {
-      if (sign_a != internal_negative) {
-        overflow = 1;
-      }
-    }
+    
+    result = internal_result[15:0];    
     
   }
 }

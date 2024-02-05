@@ -12,6 +12,8 @@ module device_timers (
     output io_out[8],             // read data
     input io_read,                // request to read from io 
     input io_write,               // request to write to io 
+    output rd_valid,              // what's on io_out is valid
+    output wr_rdy,                // ready to write more 
     output irq_service            // if set, fire an interrupt!
   ) {
   .clk(clk), .rst (rst) {
@@ -33,6 +35,9 @@ module device_timers (
     irq_service = 0;
     rn.seed = 0;
     rn.next = 0;
+    rd_valid = 1bx;
+    wr_rdy = 1;
+    
     timer_modes.d[4] = Timer_modes.RANDOM;
     
     ms.d = ms.q + 1;                          // millisecond timer
@@ -45,6 +50,7 @@ module device_timers (
           Timer_modes.ONE_SHOT:
             if (timer_cur.q[i] < timer_dur.q[i]) {
               timer_cur.d[i] = timer_cur.q[i] + 1;
+              timer_read.d[i] = timer_cur.q[i] + 1;
             } else {
               timer_read.d[i] = timer_cur.q[i];
               timer_cur.d[i] = 0;
@@ -66,6 +72,7 @@ module device_timers (
     if (hs.q >= 9) {
       hs.d = 0;
       rtc.d[3] = rtc.q[3] + 1;                // increment hundredths
+      irq_service = 1;                        // signal CPU that time changed
       if (rtc.q[3] >= 99) {                   // ... about to roll over?
         rtc.d[3] = 0;                         // ... reset hundredths to zero
         rtc.d[2] = rtc.q[2] + 1;              // ... increment seconds
@@ -102,21 +109,14 @@ module device_timers (
              rtc.d[4h1] = temp.q[4h1];
              rtc.d[4h2] = temp.q[4h2];
              rtc.d[4h3] = temp.q[4h3];
-        4h1: temp.d[4h1] = io_in;
-        4h2: temp.d[4h2] = io_in;
-        4h3: temp.d[4h3] = io_in;
         4h4: timer_dur.d[0] = c{io_in, temp.q[4h5]};
              timer_cur.d[0] = 0;
-        4h5: temp.d[4h5] = io_in;
         4h6: timer_dur.d[1] = c{io_in, temp.q[4h7]};
              timer_cur.d[1] = 0;
-        4h7: temp.d[4h7] = io_in;
         4h8: timer_dur.d[2] = c{io_in, temp.q[4h9]};
              timer_cur.d[2] = 0;
-        4h9: temp.d[4h9] = io_in;
         4hA: timer_dur.d[3] = c{io_in, temp.q[4hB]};
              timer_cur.d[3] = 0;
-        4hB: temp.d[4hB] = io_in;
         4hC: timer_modes.d[0] = io_in[1:0];
              timer_modes.d[1] = io_in[3:2];
              timer_modes.d[2] = io_in[5:4];
@@ -132,10 +132,13 @@ module device_timers (
                timer_cur.d[r] = 0;
                timer_dur.d[r] = 0;
              }
+        default:
+          temp.d[port_sel] = io_in;
       }
     }
   
     if (io_read) {
+      rd_valid = 1;
       case (port_sel) {
         4h0: io_out = rtc.q[0];                // might have to put a read hold on rtc to prevent issues on roll overs
         4h1: io_out = rtc.q[1];

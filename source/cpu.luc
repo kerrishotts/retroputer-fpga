@@ -17,7 +17,8 @@ module cpu (
     input clk,  // clock
     input rst,  // reset
     input trap,          // trap reqeusted from I/O (read irq)
-    input  irq[8],       // IRQ signals from bus
+    input  irq[16],      // IRQ signals from bus
+    output irq_ack[16],  // IRQ acknowledgements
     input ready,         // ready pin (if 1, CPU will run)
     output address[19],  // 19-bit memory address selector
     output port[8],      // 8-bit I/O port selector
@@ -43,13 +44,15 @@ module cpu (
     
   ) {
 
-  .clk(clk), .rst(rst) {
-    dff reg[12][16];     // 12 16-bit registers (alternatively 24 8-bit registers)
-    dff inst[4][8];      // 32-bit instruction
-    fsm state = { INIT, FETCH_1, FETCH_2, FETCH_3, FETCH_4, DECODE, EXECUTE, HALT };
-    
-    
+  .clk(clk) {
+    .rst(rst) {
+      dff reg[12][16];     // 12 16-bit registers (alternatively 24 8-bit registers)
+      dff inst[4][8];      // 32-bit instruction
+      dff instOpExec[8];   // Final instruction to execute (after decodes & fixups)
+      fsm state = { INIT, FETCH_1, FETCH_2, FETCH_3, FETCH_4, DECODE_1, DECODE_2, EXECUTE, NEXT, HALT };
+    }  
   }
+    alu alu; 
   
   instLUT instLUT; 
   memory_mapper mapper;
@@ -57,6 +60,11 @@ module cpu (
   sig instSize[2];
   sig instOp[8];
   sig fixup[1];
+  
+  sig destReg[3];
+  sig destRegSize[1];
+  sig srceReg[3];
+  sig srceRegSize[1];
     
   always {
     /* defaults */
@@ -70,6 +78,15 @@ module cpu (
     io_read = 1b0;                   // no io read request
     mapper.address = 19hxxx;         // mapper's address can float when we're not asserting anything
     mapper.mm = reg.q[Reg.MM][14:0]; // mapper's memory map is linked to register MM
+    irq_ack = 16bx;
+    
+    alu.size_r = 1bx;
+    alu.size_a = 1bx;
+    alu.size_b = 1bx;
+    alu.op = 4bx;
+    alu.carry_in = 1bx;
+    alu.a = 16bx;
+    alu.b = 16bx;
     
     dbg_reg_val = reg.q[dbg_reg_sel];// output the selected register for debugging purposes
     if (dbg_reg_write) {
@@ -98,17 +115,12 @@ module cpu (
           d_read = 1b1;                             // request READ from memory
           if(d_rdy) {                               // when data is available
             reg.d[Reg.MP] = reg.q[Reg.MP] + 1;      // ... increment MP by one (ready for next byte, if needed)
-//            reg.d[Reg.PC] = reg.q[Reg.PC] + 1;      // ... increment MP by one (ready for next byte, if needed)
             inst.d[0] = d_in;                       // ... set the instruction's first byte to the data
             inst.d[1] = 0;                          // ... clear the rest
             inst.d[2] = 0;
             inst.d[3] = 0;
             instLUT.opcode = d_in;                  // ... set the opcode to see if we need to read more
-            if(instSize != InstWidth.ONE) {         
-              state.d = state.FETCH_2;              // ... ... instruction is more than one byte, keep reading
-            } else {
-              state.d = state.DECODE;               // ... ... instruction is complete, go to decoding
-            }
+            state.d = instSize != InstWidth.ONE ? state.FETCH_2 : state.DECODE_1;
           }
           
         state.FETCH_2:
@@ -116,43 +128,33 @@ module cpu (
           d_read = 1b1;                             // request READ from memory
           if(d_rdy) {                               // when data is availabe
             reg.d[Reg.MP] = reg.q[Reg.MP] + 1;      // ... increment MP by one (ready for next byte, if needed)
-//            reg.d[Reg.PC] = reg.q[Reg.PC] + 1;      // ... increment MP by one (ready for next byte, if needed)
             inst.d[1] = d_in;                       // ... populate second byte of instruction
-            //instLUT.opcode = d_in;                  // ... set the opcode so we can see if we need to read more
-            if(instSize != InstWidth.TWO) {
-              state.d = state.FETCH_3;              // ... ... got another byte to go
-            } else {
-              state.d = state.DECODE;               // ... ... complete; decode!
-            }
+            state.d = instSize != InstWidth.TWO ? state.FETCH_3 : state.DECODE_1;
           }
         state.FETCH_3:
           mapper.address = c{3b000, reg.q[Reg.MP]}; // read another byte from mapped memory
           d_read = 1b1;                             // request READ from memory
           if(d_rdy) {                               // when data is available
             reg.d[Reg.MP] = reg.q[Reg.MP] + 1;      // ... increment MP by one (ready for next byte, if needed)
-//            reg.d[Reg.PC] = reg.q[Reg.PC] + 1;      // ... increment MP by one (ready for next byte, if needed)
             inst.d[2] = d_in;                       // ... populate third byte of instruction
-            //instLUT.opcode = d_in;                  // ... set the opcode 
-            if(instSize != InstWidth.THREE) {
-              state.d = state.FETCH_4;              // ... ... one final byte to go
-            } else {
-              state.d = state.DECODE;               // ... ... complete instruction; decode!
-            }
+            state.d = instSize != InstWidth.THREE ? state.FETCH_4 : state.DECODE_1;
           }
         state.FETCH_4:
           mapper.address = c{3b000, reg.q[Reg.MP]}; // read another byte from mapped memory
           d_read = 1b1;                             // request READ from memory
           if(d_rdy) {
             reg.d[Reg.MP] = reg.q[Reg.MP] + 1;      // ... increment MP by one (ready for next byte, if needed)
-//            reg.d[Reg.PC] = reg.q[Reg.PC] + 1;      // increment MP by one (ready for next byte, if needed)
             inst.d[3] = d_in;                       // store final instruction byte
-            //instLUT.opcode = d_in;
-            state.d = state.DECODE;                 // no instruction is longer than four bytes; go to decoding
+            state.d = state.DECODE_1;                 // no instruction is longer than four bytes; go to decoding
           }
-        state.DECODE:
+        state.DECODE_1:
           reg.d[Reg.PC] = reg.q[Reg.MP];            // Move PC to match MP
+          instOpExec.d = instOp;
           fixup = 1b0;                              // signal if we need a fixup -- 0 means no
           // fix ups -- need to account for having read too much of the instruction
+          fixup = (instOp == Op.LD_FIXUP && inst.q[1] ==0 && inst.q[0][0]) ||
+                  ((instOp == Op.LOOP_FIXUP || instOp == Op.BR_FIXUP) && inst.q[1][0]);
+/*                
           case (instOp) {
             Op.LD_FIXUP:                            // if loading absolute with AL-DL, need fixup
               if (inst.q[1] == 8h00 && inst.q[0][0]) {
@@ -167,13 +169,96 @@ module cpu (
                 fixup = 1b1;
               }
           }
+*/          
           if (fixup) {
             // move MP and PC back by one
             reg.d[Reg.MP] = reg.q[Reg.MP] - 1;
             reg.d[Reg.PC] = reg.q[Reg.MP] - 1;
           }
-          state.d = state.EXECUTE;                  // we've got enough to continue
+          state.d = state.DECODE_2;                  // we've got enough to continue
+        state.DECODE_2:
+          case (instOp) {
+            Op.NOT_NEG_EXC_FIXUP:                   // select the corret opcode based on second byte
+              case (inst.q[1][5:4]) {
+                2b00: instOpExec.d = Op.NOT_D;
+                2b01: instOpExec.d = Op.NEG_D;
+                2b10: instOpExec.d = Op.EXC_D;
+                default: instOpExec.d = Op.INVALID;
+              }
+            Op.LD_FIXUP:
+              if (inst.q[1] == 8h00) {
+                instOpExec.d = inst.q[0][0] ? Op.LD_D_IMMB : Op.LD_D_IMMW;
+              } else {
+                instOpExec.d = Op.LD_D_ADDR;
+              }
+            Op.LOOP_FIXUP:
+              instOpExec.d = inst.q[1][0] ? Op.LOOPS_ADR : Op.LOOP_ADDR;
+            Op.BR_FIXUP:
+              instOpExec.d = inst.q[1][0] ? Op.BRS_ADR : Op.BR_ADDR;
+          }
+          state.d = state.EXECUTE;
         state.EXECUTE:
+          state.d = state.NEXT;        
+          case (instOpExec.q) {
+            Op.ADD_D_S:
+              destReg = inst.q[1][7:5];
+              destRegSize = inst.q[1][4];
+              srceReg = inst.q[1][3:1];
+              srceRegSize = inst.q[1][0];
+              alu.size_a = destRegSize;
+              alu.a = destRegSize ? /* BYTE */ reg.q[destReg][7:0] : reg.q[destReg];
+              alu.size_b = srceRegSize;
+              alu.b = srceReg ? /* BYTE */ reg.q[srceReg][7:0] : reg.q[srceReg];
+              alu.carry_in = reg.q[Reg.IRQ_FLAGS][2];
+              alu.op = AluOps.ADD;
+              if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = alu.result[7:0];
+              else             /* WORD */ reg.d[destReg] = alu.result;
+              reg.d[Reg.IRQ_FLAGS][3:0] = c{alu.negative, alu.carry, alu.overflow, alu.zero};              
+            Op.LD_D_IMMW:
+              destReg = inst.q[0][3:1];
+              reg.d[destReg] = c{inst.q[2], inst.q[3]};
+            Op.LD_D_IMMB:
+              destReg = inst.q[0][3:1];
+              reg.d[destReg][7:0] = inst.q[2];
+            Op.INC_D:
+              destReg = inst.q[0][3:1];
+              destRegSize = inst.q[0][0];
+              alu.size_a = destRegSize;
+              alu.a = destRegSize ? /* BYTE */ c{8h00, reg.q[destReg][7:0]} : /* WORD */ reg.q[destReg];
+              alu.op = AluOps.INC;
+              reg.d[Reg.IRQ_FLAGS][3:0] = c{alu.negative, alu.carry, alu.overflow, alu.zero};              
+              if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = alu.result[7:0];
+              else             /* WORD */ reg.d[destReg] = alu.result;                
+            Op.DEC_D:
+              destReg = inst.q[0][3:1];
+              destRegSize = inst.q[0][0];
+              alu.size_a = destRegSize;
+              alu.a = destRegSize ? /* BYTE */ c{8h00, reg.q[destReg][7:0]} : /* WORD */ reg.q[destReg];
+              alu.op = AluOps.DEC;
+              reg.d[Reg.IRQ_FLAGS][3:0] = c{alu.negative, alu.carry, alu.overflow, alu.zero};              
+              if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = alu.result[7:0];
+              else             /* WORD */ reg.d[destReg] = alu.result;                
+            Op.LOOPS_ADR:
+              destReg = inst.q[0][3:1];
+              destRegSize = inst.q[0][0];
+              alu.size_a = destRegSize;
+              alu.a = destRegSize ? /* BYTE */ c{8h00, reg.q[destReg][7:0]} : /* WORD */ reg.q[destReg];
+              alu.op = AluOps.DEC;
+              reg.d[Reg.IRQ_FLAGS][3:0] = c{alu.negative, alu.carry, alu.overflow, alu.zero};              
+              if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = alu.result[7:0];
+              else             /* WORD */ reg.d[destReg] = alu.result;                
+              
+              if (!alu.carry) {
+                // THIS IS NOT COMPLETE; NO HANDLING OF ADDRESSING MODES ATM
+                // jumps need to be sign extended when using eight bit short addresses
+                
+                reg.d[Reg.MP] = reg.q[Reg.MP] + c{inst.q[2][7] ? 8hFF : 8h00, inst.q[2]};
+              }
+              
+            Op.BRK:
+              state.d = dbe ? state.HALT : state.NEXT;
+          }
+        state.NEXT: 
           state.d = state.FETCH_1;                  // when done, go back to fetch the next instruction
           if (dbe & reg.q[Reg.IRQ_FLAGS][4]) {      // unless debugger is attached and single step enabled
             state.d = state.HALT;                   // ... in which case, halt

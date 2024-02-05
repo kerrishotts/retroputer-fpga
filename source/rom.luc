@@ -4,17 +4,20 @@ module rom (
   ) {
 
   always {
-    out = 0; // NOP
     
     case (addr) {
-      16hFF00: out = 8h10; 16hFF01: out = 8h00; 16hFF02: out = 8h00; 16hFF03: out = 8h00;  // LD A, 0 
-      16hFF04: out = 8h14; 16hFF05: out = 8h00; 16hFF06: out = 8hFF; 16hFF07: out = 8hFE;  // LD C, 0xFFFE
-      16hFF08: out = 8hC0;                                                                 // INC A 
-      16hFF09: out = 8h84; 16hFF0A: out = 8h01; 16hFF0B: out = 8hFC;                       // LOOPS -4, C 
-      16hFF0C: out = 8h14; 16hFF0D: out = 8h00; 16hFF0E: out = 8h7F; 16hFF0F: out = 8hFE;  // LD C, 0x7FFE
-      16hFF10: out = 8hD0;                                                                 // DEC A
-      16hFF11: out = 8h84; 16hFF12: out = 8h01; 16hFF13: out = 8hFC;                       // LOOPS -4, C 
-      16hFF14: out = 8h3F;                                                                 // BRK
+      16hFF00: out = 8h10; 16hFF01: out = 8h00; 16hFF02: out = 8h01; 16hFF03: out = 8h02;  // LD A, 0102
+      16hFF04: out = 8h12; 16hFF05: out = 8h00; 16hFF06: out = 8h02; 16hFF07: out = 8h03;  // LD B, 0203
+      16hFF08: out = 8h01; 16hFF09: out = 8h02;                                            // ADD A, B      
+      16hFF0A: out = 8h10; 16hFF0B: out = 8h00; 16hFF0C: out = 8h00; 16hFF0D: out = 8h00;  // LD A, 0 
+      16hFF0E: out = 8h14; 16hFF0F: out = 8h00; 16hFF10: out = 8hFF; 16hFF11: out = 8hFE;  // LD C, 0xFFFE
+      16hFF12: out = 8hC0;                                                                 // INC A 
+      16hFF13: out = 8h84; 16hFF14: out = 8h01; 16hFF15: out = 8hFC;                       // LOOPS -4, C 
+      16hFF16: out = 8h14; 16hFF17: out = 8h00; 16hFF18: out = 8h7F; 16hFF19: out = 8hFE;  // LD C, 0x7FFE
+      16hFF1A: out = 8hD0;                                                                 // DEC A
+      16hFF1B: out = 8h84; 16hFF1C: out = 8h01; 16hFF1D: out = 8hFC;                       // LOOPS -4, C 
+      16hFF1E: out = 8h3F;                                                                 // BRK
+      default: out = 8h00;
     }
   }
 }
