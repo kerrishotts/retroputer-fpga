@@ -12,6 +12,7 @@ export default function App() {
 	const port = useContext(SerialPortContext);
 
 	const [ portStatus, setPortStatus ] = useState(false);
+	const [ portError, sertPortError ] = useState("");
 	const [ portData, setPortData ] = useState([]);
 	const [ counter, setCounter ] = useState(0);
 	const [ which, setWhich] = useState("io");
@@ -59,23 +60,32 @@ export default function App() {
 				if (port.isOpen) {
 					let length, width;
 					if (which === "io") {
-						port.write([0x4f,0x00,0x00,0x00,0x80]);
+						port.isOpen && port.write([0x4f,0x00,0x00,0x00,0x80]);
 						width = 8;
 						length = 16;
 					}
 					if (which === "r") {
-						port.write([0x4b,0x00,0x00,0x00,0xC0]);
+						port.isOpen && port.write([0x4b,0x00,0x00,0x00,0xC0]);
 						width = 16;
 						length = 12;
 					}
-					const buf = port.read();
-					if (buf !== null) {
-						const data = Array.from(buf);
-						const arr = Array.from({length}, (_, idx) => {
-							return width === 8 ? (data[idx * 4] || 0)
-							                   : ((data[idx * 4 + 1] || 0) << 8) | (data[idx * 4] || 0);
-						})
-						setPortData(arr);
+					if (port.isOpen) {
+						let buf = null;
+						let ctr = 1000;
+						while (buf === null && ctr > 0) {
+							buf = port.read();
+							ctr--;
+						}
+						if (buf !== null) {
+							const data = Array.from(buf);
+							const arr = Array.from({length}, (_, idx) => {
+								return width === 8 ? (data[idx * 4] || 0)
+												: ((data[idx * 4 + 1] || 0) << 8) | (data[idx * 4] || 0);
+							})
+							setPortData(arr);
+						} else {
+							setPortData([]);
+						}
 					} else {
 						setPortData([]);
 					}
@@ -84,8 +94,15 @@ export default function App() {
 		};
 		port.on("open", handler);
 
+		const errorHandler = error => {
+			sertPortError(error.msg);
+		}
+
+		port.on("error", errorHandler)
+
 		return () => {
 			port.off("open", handler);
+			port.off("error", errorHandler);
 			port.close();
 			clearInterval(id);
 		}
@@ -94,6 +111,8 @@ export default function App() {
 	return (
 		<Text>
 			Status: <Text color={port.isOpen ? "green" : "red"}>{port.isOpen ? "Connected" : "Disconnected"}</Text>
+			<Newline />
+			Error: <Text color={port.portError === "" ? "green" : "red"}>{portError === "" ? "None" : portError}</Text>
 			<Newline />
 			Which: {which === "io" ? "I/O" : "Reg"} Sel: {sel} Value: {hexIn}
 			<Newline />
