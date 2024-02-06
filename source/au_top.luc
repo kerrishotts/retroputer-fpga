@@ -59,7 +59,12 @@ module au_top (
       dff reg_select[4];
       dff port_select[8];
       
-      //dff seg_data[16];
+      dff waiting_for_io[1];
+      dff waiting_for_io_write[1];
+      dff waiting_for_io_read[1];
+      dff led_waiting_for_io_read[1];
+      dff waiting_for_mem[1];
+      dff io_read[8];
 
       #CLK_FREQ(81250000) {
         reg_interface reg_interface;
@@ -186,14 +191,29 @@ module au_top (
         }
       2b10:
         if (up_edge_detector.out) {
-            port_select.d = port_select.q == 15 ? 0 : port_select.q + 1; // wrap back to zero after 16 ports    
+            port_select.d = port_select.q + 1; 
+          io_read.d = port_select.q;
         }
         if (down_edge_detector.out) {
-            port_select.d = port_select.q == 0 ? 15 : port_select.q - 1; // wrap back to 15 after going past first port
+            port_select.d = port_select.q - 1;
+          io_read.d = port_select.q;
         }
         bus.io_addr = port_select.q;
-        bus.io_read = 1;
-        seg.values = {port_select.q[7:4], port_select.q[3:0], bus.io_out[7:4], bus.io_out[3:0]}; // show selected register on IO 7Seg
+        if (bus.rdy) {
+          led_waiting_for_io_read.d = 1;
+          bus.io_read = 1;
+          if (bus.rd_valid) {
+            io_read.d = bus.io_out;
+            led_waiting_for_io_read.d = 0;
+          }
+        }
+        if (led_waiting_for_io_read.q) {
+          if (bus.rd_valid) {
+            io_read.d = bus.io_out;
+            led_waiting_for_io_read.d = 0;
+          }
+        }
+        seg.values = {port_select.q[7:4], port_select.q[3:0], io_read.q[7:4], io_read.q[3:0]}; // show selected register on IO 7Seg
         if (nmi_edge_detector.out) { // user pressed NMI button, write middle DIPs to IO
           bus.io_in = io_dip[1];
           bus.io_write = 1;
@@ -207,10 +227,12 @@ module au_top (
     if (reg_interface.regOut.new_cmd) {
       if (reg_interface.regOut.write) {
         case (reg_interface.regOut.address[31:30]) {
+          2b01: // tell CPU to single step
+            cpu.trap = 1;              // tell the CPU it's had a trap
+            cpu.irq = 8hff;            // assert NMI, trap 127
           2b10: // write i/o 
-            bus.io_write = 1;
-            bus.io_addr = reg_interface.regOut.address[3:0];
-            bus.io_in = reg_interface.regOut.data[7:0];
+            waiting_for_io.d = 1;
+            waiting_for_io_write.d = 1;
           2b11: // write register 
             cpu.dbg_reg_sel = reg_interface.regOut.address[3:0];
             cpu.dbg_reg_data = reg_interface.regOut.data[15:0]; 
@@ -220,22 +242,44 @@ module au_top (
       } else {
         case (reg_interface.regOut.address[31:30]) {
           2b10: // read i/o 
-            bus.io_addr = reg_interface.regOut.address[3:0];
-            bus.io_read = 1;
-            reg_interface.regIn.data = bus.rd_valid ? bus.io_out : 0;
-            reg_interface.regIn.drdy = 1; 
+            waiting_for_io.d = 1;
+            waiting_for_io_read.d = 1;
 
           2b11: // read register
             cpu.dbg_reg_sel = reg_interface.regOut.address[3:0];
             reg_interface.regIn.data = cpu.dbg_reg_val;
             reg_interface.regIn.drdy = 1;
             
-          default:
-            reg_interface.regIn.data = 0;
-            reg_interface.regIn.drdy = 1;
+          //default:
+            //reg_interface.regIn.data = 0;
+            //reg_interface.regIn.drdy = 1;
         }
       }
     }
+    if (waiting_for_io.q) {
+      if (waiting_for_io_write.q) {
+        if (bus.rdy) {
+          bus.io_write = 1;
+          bus.io_addr = reg_interface.regOut.address[7:0];
+          bus.io_in = reg_interface.regOut.data[7:0];
+          waiting_for_io.d = 0;
+          waiting_for_io_write.d = 0;
+        }
+      }
+      if (waiting_for_io_read.q) {
+        if (bus.rdy) {
+          bus.io_addr = reg_interface.regOut.address[7:0];
+          bus.io_read = 1;
+        }
+        if (bus.rd_valid) {
+          reg_interface.regIn.data = bus.io_out;
+          reg_interface.regIn.drdy = 1;
+          waiting_for_io.d = 0;
+          waiting_for_io_read.d = 0;
+        }
+      }
+    }     
+    
 
   case (state.q) {
       state.RUN_CPU:
