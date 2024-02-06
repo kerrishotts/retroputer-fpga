@@ -61,8 +61,8 @@ module alu (
         internal_result = a + b + c{16b0, carry_in};
       AluOps.SUB:
         internal_result = a - b + c{16b0, carry_in};
-      AluOps.MUL:
-        internal_result = a * b;
+      //AluOps.MUL:
+      //  internal_result = a * b;
       //AluOps.DIV:
       //  internal_result = a / b;
       AluOps.AND:
@@ -81,7 +81,7 @@ module alu (
         internal_result = a >> (b & 8h3F);
       // TODO: MOD, SMUL, SDIV, SMOD
       default:
-        internal_result = 0;
+        internal_result = 17h000;
     }
     
     zero = internal_result == 0;
