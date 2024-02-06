@@ -65,6 +65,8 @@ module cpu (
   sig destRegSize[1];
   sig srceReg[3];
   sig srceRegSize[1];
+  
+  sig skip[1];
     
   always {
     /* defaults */
@@ -106,9 +108,9 @@ module cpu (
           reg.d[Reg.SP] = 16h2000;   // Stack Pointer is points at 0x2000
           reg.d[Reg.BP] = 16h2000;   // Base Poiner also points at 0x2000
           reg.d[Reg.MM] = 16b0111110001000001; // default memory mapping (page 3 = 31, page 2 = 2, page 1 = 1)
-          reg.d[Reg.IRQ_FLAGS] = c{8h0,8b01000000}; // Interrupts are DISABLED until the bootstrap code in ROM enablest them
+          reg.d[Reg.IRQ_FLAGS] = c{8h0,8b01000000}; // Interrupts are DISABLED until the bootstrap code in ROM enables them
           reg.d[Reg.IRQ_FLAGS][4] = dbe;         // if debugger is enabled, single step by default
-          state.d = state.FETCH_1;   // start fetching instructions
+          state.d = state.NEXT;     // start fetching instructions (but NEXT will let us halt immediately if need be)
   
         state.FETCH_1:
           mapper.address = c{3b000, reg.q[Reg.MP]}; // assert mapped address on address output
@@ -198,66 +200,69 @@ module cpu (
           }
           state.d = state.EXECUTE;
         state.EXECUTE:
-          state.d = state.NEXT;        
-          case (instOpExec.q) {
-            Op.ADD_D_S:
-              destReg = inst.q[1][7:5];
-              destRegSize = inst.q[1][4];
-              srceReg = inst.q[1][3:1];
-              srceRegSize = inst.q[1][0];
-              alu.size_a = destRegSize;
-              alu.a = destRegSize ? /* BYTE */ reg.q[destReg][7:0] : reg.q[destReg];
-              alu.size_b = srceRegSize;
-              alu.b = srceReg ? /* BYTE */ reg.q[srceReg][7:0] : reg.q[srceReg];
-              alu.carry_in = reg.q[Reg.IRQ_FLAGS][2];
-              alu.op = AluOps.ADD;
+          state.d = state.NEXT;
+
+          if (instOpExec.q >= Op.ADD_D_S && instOpExec.q <= Op.XOR_D_S) {
+            destReg = inst.q[1][7:5];
+            destRegSize = inst.q[1][4];
+            srceReg = inst.q[1][3:1];
+            srceRegSize = inst.q[1][0];
+            alu.size_a = destRegSize;
+            alu.a = destRegSize ? /* BYTE */ reg.q[destReg][7:0] : reg.q[destReg];
+            alu.size_b = srceRegSize;
+            alu.b = srceRegSize ? /* BYTE */ reg.q[srceReg][7:0] : reg.q[srceReg];
+            alu.carry_in = reg.q[Reg.IRQ_FLAGS][2];
+            skip = 0; // if skip isn't set, we'll store the result of aluOp back in dest
+            case (instOpExec.q[2:0]) {
+              default: alu.op = AluOps.ADD;
+              Op.ADD_D_S: alu.op = AluOps.ADD;
+              Op.SUB_D_S: alu.op = AluOps.SUB;
+              Op.CMP_D_S: alu.op = AluOps.SUB; skip = 1; // cmp is subtract, but don't store result
+              Op.AND_D_S: alu.op = AluOps.AND;
+              Op.OR_D_S:  alu.op = AluOps.OR;
+              Op.TEST_D_S: alu.op = AluOps.AND; skip = 1; // test is AND, but don't store result
+              Op.XOR_D_S: alu.op = AluOps.XOR;
+            }
+            if (!skip) {
               if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = alu.result[7:0];
               else             /* WORD */ reg.d[destReg] = alu.result;
-              reg.d[Reg.IRQ_FLAGS][3:0] = c{alu.negative, alu.carry, alu.overflow, alu.zero};              
-            Op.LD_D_IMMW:
-              destReg = inst.q[0][3:1];
-              reg.d[destReg] = c{inst.q[2], inst.q[3]};
-            Op.LD_D_IMMB:
-              destReg = inst.q[0][3:1];
-              reg.d[destReg][7:0] = inst.q[2];
-            Op.INC_D:
-              destReg = inst.q[0][3:1];
-              destRegSize = inst.q[0][0];
-              alu.size_a = destRegSize;
-              alu.a = destRegSize ? /* BYTE */ c{8h00, reg.q[destReg][7:0]} : /* WORD */ reg.q[destReg];
-              alu.op = AluOps.INC;
-              reg.d[Reg.IRQ_FLAGS][3:0] = c{alu.negative, alu.carry, alu.overflow, alu.zero};              
-              if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = alu.result[7:0];
-              else             /* WORD */ reg.d[destReg] = alu.result;                
-            Op.DEC_D:
-              destReg = inst.q[0][3:1];
-              destRegSize = inst.q[0][0];
-              alu.size_a = destRegSize;
-              alu.a = destRegSize ? /* BYTE */ c{8h00, reg.q[destReg][7:0]} : /* WORD */ reg.q[destReg];
-              alu.op = AluOps.DEC;
-              reg.d[Reg.IRQ_FLAGS][3:0] = c{alu.negative, alu.carry, alu.overflow, alu.zero};              
-              if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = alu.result[7:0];
-              else             /* WORD */ reg.d[destReg] = alu.result;                
-            Op.LOOPS_ADR:
-              destReg = inst.q[0][3:1];
-              destRegSize = inst.q[0][0];
-              alu.size_a = destRegSize;
-              alu.a = destRegSize ? /* BYTE */ c{8h00, reg.q[destReg][7:0]} : /* WORD */ reg.q[destReg];
-              alu.op = AluOps.DEC;
-              reg.d[Reg.IRQ_FLAGS][3:0] = c{alu.negative, alu.carry, alu.overflow, alu.zero};              
-              if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = alu.result[7:0];
-              else             /* WORD */ reg.d[destReg] = alu.result;                
-              
+            }
+            reg.d[Reg.IRQ_FLAGS][3:0] = c{alu.negative, alu.carry, alu.overflow, alu.zero};              
+          }
+          
+          if (instOpExec.q == Op.LD_D_IMMW) {
+            destReg = inst.q[0][3:1];
+            reg.d[destReg] = c{inst.q[2], inst.q[3]};
+          }
+          
+          if (instOpExec.q == Op.LD_D_IMMB) {
+            destReg = inst.q[0][3:1];
+            reg.d[destReg][7:0] = inst.q[2];
+          }
+          
+          if (instOpExec.q == Op.INC_D || instOpExec.q == Op.DEC_D || instOpExec.q == Op.LOOPS_ADR) {
+            destReg = inst.q[0][3:1];
+            destRegSize = inst.q[0][0];
+            alu.size_a = destRegSize;
+            alu.a = destRegSize ? /* BYTE */ c{8h00, reg.q[destReg][7:0]} : /* WORD */ reg.q[destReg];
+            alu.op = (instOpExec.q == Op.INC_D) ? AluOps.INC : AluOps.DEC;
+            reg.d[Reg.IRQ_FLAGS][3:0] = c{alu.negative, alu.carry, alu.overflow, alu.zero};              
+            if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = alu.result[7:0];
+            else             /* WORD */ reg.d[destReg] = alu.result;
+            
+            if (instOpExec.q == Op.LOOPS_ADR) {
               if (!alu.carry) {
                 // THIS IS NOT COMPLETE; NO HANDLING OF ADDRESSING MODES ATM
                 // jumps need to be sign extended when using eight bit short addresses
                 
                 reg.d[Reg.MP] = reg.q[Reg.MP] + c{inst.q[2][7] ? 8hFF : 8h00, inst.q[2]};
               }
-              
-            Op.BRK:
-              state.d = dbe ? state.HALT : state.NEXT;
+            }
           }
+              
+          if (instOpExec.q == Op.BRK && dbe)
+              state.d = state.HALT;
+          
         state.NEXT: 
           state.d = state.FETCH_1;                  // when done, go back to fetch the next instruction
           if (dbe & reg.q[Reg.IRQ_FLAGS][4]) {      // unless debugger is attached and single step enabled
