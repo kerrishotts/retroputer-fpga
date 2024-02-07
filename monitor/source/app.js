@@ -7,10 +7,14 @@ const idxs = {
 	     {h:"tm0h", b:16, w:4}, {h:"tm0l", b:16, w:4}, {h:"tm1h", b:16, w:4}, {h:"tm1l", b:16, w:4}, 
 		 {h:"tm2h", b:16, w:4}, {h:"tm2l", b:16, w:4}, {h:"tm3h", b:16, w:4}, {h:"tm3l", b:16, w:4},
 		 {h:"m3m2m1m0", b:2, w:8}, {h:"rndh", b:16, w:4}, {h:"rndl", b:16, w:4}, {h:"rset", b:16, w:4}],
-	r: [{h:"A al", b:16, w:4}, {h:"B bl", b:16, w:4}, {h:"C cl", b:16, w:4}, {h:"D dl", b:16, w:4},
+	reg: [{h:"A al", b:16, w:4}, {h:"B bl", b:16, w:4}, {h:"C cl", b:16, w:4}, {h:"D dl", b:16, w:4},
 	    {h:"X", b:16, w:4}, {h:"Y", b:16, w:4}, {h:"BP", b:16, w:4}, {h:"SP", b:16, w:4}, 
 		{h:"IRQ     EDISNCVZ", b:2, w:16}, {h:"PC", b:16, w:4}, {h:".page3page2page1", b:2, w:16}, {h:"MPtr", b:16, w:4}, 
-		{h:"", b:16, w:2}, {h:"", b:16, w:2}, {h: "", b:16, w:2}, {h:"", b:16, w:2}]
+		{h:"", b:16, w:2}, {h:"", b:16, w:2}, {h: "", b:16, w:2}, {h:"", b:16, w:2}],
+	mem: [{h:"00", b:16, w:2}, {h:"01", b:16, w:2}, {h:"02", b:16, w:2}, {h:"03", b:16, w:2}, 
+	     {h:"04", b:16, w:2}, {h:"05", b:16, w:2}, {h:"06", b:16, w:2}, {h:"07", b:16, w:2}, 
+		 {h:"08", b:16, w:2}, {h:"09", b:16, w:2}, {h:"0A", b:16, w:2}, {h:"08", b:16, w:2},
+		 {h:"0C", b:16, w:2}, {h:"0D", b:16, w:2}, {h:"0E", b:16, w:2}, {h:"0F", b:16, w:2}],
 }
 
 export default function App() {
@@ -18,24 +22,34 @@ export default function App() {
 	const port = useContext(SerialPortContext);
 
 	const [ portStatus, setPortStatus ] = useState(false);
-	const [ portError, sertPortError ] = useState("");
+	const [ portError, setPortError ] = useState("");
 	const [ portData, setPortData ] = useState([]);
 	const [ counter, setCounter ] = useState(0);
-	const [ which, setWhich] = useState("r");
+	const [ which, setWhich] = useState("reg");
 	const [ hexIn, setHexIn] = useState("");
 	const [ sel, setSel] = useState(0);
+	const [ memBase, setMemBase] = useState(0xFF00);
+	const [ ioBase, setIoBase] = useState(0x00);
 
 	useInput((input, key) => {
 		if (input === "s") {
 			// tell CPU to single step
-			if (port.isOpen) port.write([0xC0, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00]);
+			if (port.isOpen) port.write([0x80, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00]);
+		}
+		if (input === "S") {
+			// tell CPU to single step, a lot of times
+			if (port.isOpen) port.write([0xBF, 0x00, 0x00, 0x00, 0x40, ...Array.from({length:256}, () => 0x00)]);
 		}
 		if (input === "i") {
 			setWhich("io");
 			setPortData([]);
 		}
 		if (input === "r") {
-			setWhich("r");
+			setWhich("reg");
+			setPortData([]);
+		}
+		if (input === "m") {
+			setWhich("mem");
 			setPortData([]);
 		}
 		if ((input >= "0" && input <="9") || (input >= "a" && input <= "f") || (input >= "A" && input <= "F")) {
@@ -50,9 +64,36 @@ export default function App() {
 		if (key.rightArrow) {
 			setSel(prevSel => prevSel < 15 ? prevSel + 1 : 0);
 		}
+		if (key.upArrow) {
+			switch (which) {
+				case "mem": setMemBase(prevMemBase => prevMemBase === 0 ? 0x7FFF0 : prevMemBase - 16); break;
+				case "io": setIoBase(prevIoBase => prevIoBase === 0 ? 0xF0 : prevIoBase - 16); break;
+			}
+		}
+		if (key.downArrow) {
+			switch (which) {
+				case "mem": setMemBase(prevMemBase => prevMemBase === 0x7FFf0 ? 0 : prevMemBase + 16); break;
+				case "io": setIoBase(prevIoBase => prevIoBase === 0xF0 ? 0 : prevIoBase + 16); break;
+			}
+		}
+		if (input === "g") {
+			const num = Number(`0x${hexIn}`) & 0xFFFF0;
+			switch (which) {
+				case "mem": setMemBase(num); break;
+				case "io": setIoBase(num); break;
+			}
+			setHexIn("");
+		}
 		if (input === "w") {
 			const num = Number(`0x${hexIn}`);
-			port.drain(() => port.write([0xC0, sel, 0x00, 0x00, which === "io" ? 0x80 : 0xC0, num & 0xFF, (num & 0xFF00) >> 8, 0x00, 0x00]))
+			let addr = 0, bank;
+			switch (which) {
+				case "mem": bank = 0x00; addr = memBase; break;
+				case "io": bank = 0x80; addr = ioBase; break;
+				case "reg": bank = 0xC0; break;
+			}
+			addr += sel;
+			port.drain(() => port.write([0x80, addr & 0x00FF, (addr & 0xFF00) >> 8, (addr & 0x70000) >> 16, bank, num & 0xFF, (num & 0xFF00) >> 8, 0x00, 0x00]))
 			setHexIn("");
 		}
 		if (input === 'q') {
@@ -61,7 +102,6 @@ export default function App() {
 	});
 
 	useEffect(() => {
-		console.log("connecting");
 		if (!port.isOpen) port.open();
 		let id;
 		const handler = () => {
@@ -71,14 +111,19 @@ export default function App() {
 				if (port.isOpen) {
 					let length, width;
 					if (which === "io") {
-						port.isOpen && port.drain(() => port.write([0x4f,0x00,0x00,0x00,0x80]));
+						port.isOpen && port.drain(() => port.write([0x4f,ioBase & 0x00FF, 0x00 ,0x00,0x80]));
 						width = 8;
 						length = 16;
 					}
-					if (which === "r") {
+					if (which === "reg") {
 						port.isOpen && port.drain(() => port.write([0x4b,0x00,0x00,0x00,0xC0]));
 						width = 16;
 						length = 12;
+					}
+					if (which === "mem") {
+						port.isOpen && port.drain(() => port.write([0x4f,memBase & 0x00FF,(memBase & 0xFF00) >> 8, (memBase & 0x70000) >> 16,0x00]));
+						width = 8;
+						length = 16;
 					}
 					if (port.isOpen) {
 						let buf = null;
@@ -106,20 +151,17 @@ export default function App() {
 		port.on("open", handler);
 
 		const errorHandler = error => {
-			console.log("error", error);
-			sertPortError(error.msg);
+			setPortError(error.message);
 		}
-
 		port.on("error", errorHandler)
 
 		return () => {
-			console.log("closing");
 			port.off("open", handler);
 			port.off("error", errorHandler);
 			if (port.isOpen) port.close();
 			clearInterval(id);
 		}
-	}, [which]);
+	}, [which, memBase, ioBase]);
 
 	return (
 		<Text>
@@ -127,7 +169,7 @@ export default function App() {
 			<Newline />
 			Error: <Text color={port.portError === "" ? "green" : "red"}>{portError === "" ? "None" : portError}</Text>
 			<Newline />
-			Which: {which === "io" ? "I/O" : "Reg"} Sel: {sel} Value: {hexIn}
+			Which: {which} Base: {which == "mem" ? memBase.toString(16).padStart(5,"0") : which == "io" ? ioBase.toString(16).padStart(2,"0") : "N/A"} Sel: {sel} Value: {hexIn}
 			<Newline />
 			Idxs: {portData.map((data, idx) => <Text key={`hdg${idx}`} underline={sel===idx ? true : undefined}>{idxs[which][idx].h.padEnd(idxs[which][idx].w," ") + " "}</Text>)}
 			<Newline />
