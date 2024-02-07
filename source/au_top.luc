@@ -30,6 +30,11 @@ module au_top (
   
   sig rst;                  // reset signal
   
+  sig frontSel[2];          // select what info to show on front LEDs
+  
+  sig dbe;                  // debugger attached
+  sig hideROM;              // if 1, ROM addresses read from RAM
+  
   clk_wiz_0 clk_wiz;
 
   rom rom;
@@ -52,7 +57,7 @@ module au_top (
     .rst(rst) {
       cpu cpu;
       lru_cache cache(#ENTRIES(1), #WORD_SIZE(8), #AGE_BITS(1));
-      fsm state = { RUN_CPU, WAIT_MEM_READ, WAIT_IO_READ, WAIT_IO_RDY };
+      fsm state = { RUN_CPU, WAIT_MEM_READ, WAIT_IO_READ, WAIT_IO_READ_RDY, WAIT_IO_WRITE_RDY };
       //fsm regint = { RUN, WAIT_READ, READ_IO };
       multi_seven_seg seg;
       
@@ -64,6 +69,9 @@ module au_top (
       dff waiting_for_io_read[1];
       dff led_waiting_for_io_read[1];
       dff waiting_for_mem[1];
+      dff waiting_for_mem_write[1];
+      dff waiting_for_mem_read[1];
+      dff mem_read[8];
       dff io_read[8];
 
       #CLK_FREQ(81250000) {
@@ -140,11 +148,14 @@ module au_top (
     
     led = c{2h00, io_button[0], io_button[1], io_button[2], io_button[3], io_dip[0][0], rst};
     
+    dbe = io_dip[0][0];
+    hideROM = io_dip[0][7];
+    
     bus.io_read = 0;
     bus.io_write = 0;
     cpu.trap = bus.irq_request;
     cpu.ready = 0;
-    cpu.dbe = io_dip[0][0];     // DEBUG ENABLED is DIP SWITCH 0
+    cpu.dbe = dbe;
     cpu.irq = bus.irq;
     bus.irq_ack = cpu.irq_ack;
     cpu.io_in = bus.io_out;
@@ -169,7 +180,9 @@ module au_top (
     io_seg = ~seg.seg;           // connect segments to the driver
     io_sel = ~seg.sel;           // connect digit select to the driver
 
-    case (io_dip[2][7:6]) {
+    frontSel = io_dip[2][7:6];
+
+    case (frontSel) {
       2b00:
         if (up_edge_detector.out) {
             reg_select.d = reg_select.q == 11 ? 0 : reg_select.q + 1; // wrap back to zero after 12 registers    
@@ -227,6 +240,9 @@ module au_top (
     if (reg_interface.regOut.new_cmd) {
       if (reg_interface.regOut.write) {
         case (reg_interface.regOut.address[31:30]) {
+          2b00: // write to RAM
+            waiting_for_mem.d = 1;
+            waiting_for_mem_write.d = 1;
           2b01: // tell CPU to single step
             cpu.trap = 1;              // tell the CPU it's had a trap
             cpu.irq = 8hff;            // assert NMI, trap 127
@@ -241,6 +257,9 @@ module au_top (
         }
       } else {
         case (reg_interface.regOut.address[31:30]) {
+          2b00: 
+            waiting_for_mem.d = 1;
+            waiting_for_mem_read.d = 1;
           2b10: // read i/o 
             waiting_for_io.d = 1;
             waiting_for_io_read.d = 1;
@@ -253,6 +272,29 @@ module au_top (
           //default:
             //reg_interface.regIn.data = 0;
             //reg_interface.regIn.drdy = 1;
+        }
+      }
+    }
+    if (waiting_for_mem.q) {
+      if (waiting_for_mem_write.q) {
+        if (cache.wr_ready) {
+          cache.wr_addr = reg_interface.regOut.address[18:0];
+          cache.wr_data = reg_interface.regOut.data[7:0];
+          cache.wr_valid = 1;
+          waiting_for_mem.d = 0;
+          waiting_for_mem_write.d = 0;
+        }
+      }
+      if (waiting_for_mem_read.q) {
+        if (cache.rd_ready) {
+          cache.rd_addr = reg_interface.regOut.address[18:0];
+          cache.rd_cmd_valid = 1;
+        }
+        if (cache.rd_data_valid) {
+          reg_interface.regIn.data = cache.rd_data[7:0];
+          reg_interface.regIn.drdy = 1;
+          waiting_for_mem_read.d = 0; 
+          waiting_for_mem.d = 0;
         }
       }
     }
@@ -280,48 +322,58 @@ module au_top (
       }
     }     
     
-
-  case (state.q) {
-      state.RUN_CPU:
-        cpu.ready = 1;
-        if (cpu.d_read) {                    // CPU is requesting to read data from memory
-          if (&cpu.address[18:16]) {         // if the address is in bank 7 (111_xxxxxxxx_xxxxxxxx)
-            cpu.d_in = rom.out;              // get the byte from ROM and give it to the CPU
-            cpu.d_rdy = 1;                   // signal the CPU that it has data
-          } else {
-            if (cache.rd_ready) {            // otherwise it's asking to read from RAM... but that takes time
-              cache.rd_cmd_valid = 1;        // ... ask cache to read from address
-              state.d = state.WAIT_MEM_READ; // ... and wait
+    if (!(waiting_for_io.q || waiting_for_mem.q)) {
+      case (state.q) {
+        state.RUN_CPU:
+          cpu.ready = 1;
+          if (cpu.d_read) {                    // CPU is requesting to read data from memory
+            if (&cpu.address[18:16] && !hideROM) {  // if the address is in bank 7 (111_xxxxxxxx_xxxxxxxx)
+              cpu.d_in = rom.out;              // get the byte from ROM and give it to the CPU
+              cpu.d_rdy = 1;                   // signal the CPU that it has data
+            } else {
+              if (cache.rd_ready) {            // otherwise it's asking to read from RAM... but that takes time
+                cache.rd_cmd_valid = 1;        // ... ask cache to read from address
+                state.d = state.WAIT_MEM_READ; // ... and wait
+              }
             }
           }
-        }
-        if (cpu.d_write) {                   // requesting to write to memory
-          if (cache.wr_ready) {              // ... wait for the cache to be write ready 
-            cache.wr_valid = 1;              // ... notify cache to write the data; note no mask for ROM -- can't be read anyway.
+          if (cpu.d_write) {                   // requesting to write to memory
+            if (cache.wr_ready) {              // ... wait for the cache to be write ready 
+              cache.wr_valid = 1;              // ... notify cache to write the data; note no mask for ROM -- can't be read anyway.
+            }
           }
-        }
-        
-        if (cpu.io_read) {
-          state.d = state.WAIT_IO_RDY;
-        }
-      state.WAIT_MEM_READ:                   // Waiting for data from RAM
-        if (cache.rd_data_valid) {           // If data is available
-          cpu.ready = 1;                     // ... CPU can run 
-          cpu.d_in = cache.rd_data;          // ... send the data in
-          cpu.d_rdy = 1;                     // ... and notify CPU
-          state.d = state.RUN_CPU;           // ... move back to RUN CPU
-        }
-      state.WAIT_IO_RDY:
-        if (bus.rdy) {
-            bus.io_read = 1;
-            state.d = state.WAIT_IO_READ;
-        }
-      state.WAIT_IO_READ:
-        if (bus.rd_valid) {                  // wait until we get data back from device
-          cpu.ready = 1;                     // ... CPU can run
-          cpu.io_rdy = 1;                    // ... notify CPU that IO data is valid (it's already wired up)
-          state.d = state.RUN_CPU;           // ... move back to RUN CPU
-        }
+          
+          if (cpu.io_read) {
+            state.d = state.WAIT_IO_READ_RDY;
+          }
+          if (cpu.io_write) {
+            state.d = state.WAIT_IO_WRITE_RDY;
+          }
+        state.WAIT_MEM_READ:                   // Waiting for data from RAM
+          if (cache.rd_data_valid) {           // If data is available
+            cpu.ready = 1;                     // ... CPU can run 
+            cpu.d_in = cache.rd_data;          // ... send the data in
+            cpu.d_rdy = 1;                     // ... and notify CPU
+            state.d = state.RUN_CPU;           // ... move back to RUN CPU
+          }
+        state.WAIT_IO_READ_RDY:
+          if (bus.rdy) {
+              bus.io_read = 1;
+              state.d = state.WAIT_IO_READ;
+          }
+        state.WAIT_IO_READ:
+          if (bus.rd_valid) {                  // wait until we get data back from device
+            cpu.ready = 1;                     // ... CPU can run
+            cpu.io_rdy = 1;                    // ... notify CPU that IO data is valid (it's already wired up)
+            state.d = state.RUN_CPU;           // ... move back to RUN CPU
+          }
+        state.WAIT_IO_WRITE_RDY:
+          if (bus.rdy) {
+            bus.io_write = 1;
+            cpu.ready = 1;
+            state.d = state.RUN_CPU;
+          }
+      }
     }
   }
 }
