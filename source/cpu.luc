@@ -202,7 +202,8 @@ module cpu (
         state.EXECUTE:
           state.d = state.NEXT;
 
-          if (instOpExec.q >= Op.ADD_D_S && instOpExec.q <= Op.XOR_D_S) {
+          if ((instOpExec.q >= Op.ADD_D_S && instOpExec.q <= Op.XOR_D_S) || (instOpExec.q >= Op.MUL_D_S && instOpExec.q <= Op.SMOD_D_S)
+            || instOpExec.q == Op.SHL_D_S || instOpExec.q == Op.SHR_D_S) {
             destReg = inst.q[1][7:5];
             destRegSize = inst.q[1][4];
             srceReg = inst.q[1][3:1];
@@ -222,6 +223,14 @@ module cpu (
               Op.OR_D_S:  alu.op = AluOps.OR;
               Op.TEST_D_S: alu.op = AluOps.AND; skip = 1; // test is AND, but don't store result
               Op.XOR_D_S: alu.op = AluOps.XOR;
+              Op.SHL_D_S: alu.op = AluOps.SHL;
+              Op.SHR_D_S: alu.op = AluOps.SHR;
+              Op.MUL_D_S: alu.op = AluOps.MUL;
+              Op.MOD_D_S: alu.op = AluOps.MOD;
+              Op.DIV_D_S: alu.op = AluOps.DIV;
+              Op.SMUL_D_S: alu.op = AluOps.SMUL;
+              Op.SMOD_D_S: alu.op = AluOps.SMOD;
+              Op.SDIV_D_S: alu.op = AluOps.SDIV;
             }
             if (!skip) {
               if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = alu.result[7:0];
@@ -246,7 +255,7 @@ module cpu (
             alu.size_a = destRegSize;
             alu.a = destRegSize ? /* BYTE */ c{8h00, reg.q[destReg][7:0]} : /* WORD */ reg.q[destReg];
             alu.op = (instOpExec.q == Op.INC_D) ? AluOps.INC : AluOps.DEC;
-            reg.d[Reg.IRQ_FLAGS][3:0] = c{alu.negative, alu.carry, alu.overflow, alu.zero};              
+            reg.d[Reg.IRQ_FLAGS][3:0] = c{alu.negative, alu.carry, alu.overflow, alu.zero};
             if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = alu.result[7:0];
             else             /* WORD */ reg.d[destReg] = alu.result;
             
@@ -259,8 +268,27 @@ module cpu (
               }
             }
           }
+          
+          if (instOpExec.q == Op.IN_D_IMMB) {
+            destReg = inst.q[1][7:5];
+            destRegSize = inst.q[1][4];
+            io_read = ~io_rdy;
+            port = inst.q[2]; 
+            if (io_rdy) {
+              if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = io_in;
+              else             /* WORD */ reg.d[destReg] = c{8h00, io_in};
+            } else state.d = state.EXECUTE; // stick around for another cycle
+          }
+          
+          if (instOpExec.q == Op.OUT_S_IMMB) {
+            srceReg = inst.q[1][7:5];
+            srceRegSize = inst.q[1][4];
+            io_out = reg.q[srceReg][7:0];
+            io_write = 1;
+            port = inst.q[2];
+          }
               
-          if (instOpExec.q == Op.BRK && dbe)
+          if ((instOpExec.q == Op.BRK && dbe) || instOpExec.q == Op.HALT)
               state.d = state.HALT;
           
         state.NEXT: 
