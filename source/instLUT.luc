@@ -143,8 +143,8 @@ module instLUT (
       h2E: out = c{InstWidth.FOUR,  Op.ST_S_ADDR};
       h2F: out = c{InstWidth.FOUR,  Op.ST_S_ADDR};
       
-      h30: out = c{InstWidth.TWO,   Op.IN_D_IMMB};
-      h31: out = c{InstWidth.TWO,   Op.OUT_S_IMMB};
+      h30: out = c{InstWidth.THREE,   Op.IN_D_IMMB};
+      h31: out = c{InstWidth.THREE,   Op.OUT_S_IMMB};
       h32: out = c{InstWidth.ONE,   Op.INVALID};
       h33: out = c{InstWidth.ONE,   Op.INVALID};
       h34: out = c{InstWidth.ONE,   Op.INVALID};
