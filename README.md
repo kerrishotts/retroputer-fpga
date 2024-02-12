@@ -16,22 +16,36 @@ Note: It's SUPER EARLY DAYS... nothing here is terribly useful. I'm also just le
 - [X] Allow user to single-step the processor using the Io board
 - [X] Build instruction size and opcode LUT
 - [X] Build fetch portion of processor fetch/decode/execute cycle
+- [X] Fetch from ROM when using bank 7
+- [X] Add some basic instructions to Execute phase to see if processor can do anything useful
+- [X] Build simple ALU (no multiply/divide/mopulo)
+- [X] Supply some ROM instructions (figure out how to load 64K ROM using a file reader later)
+- [X] Add serial connectivity to allow more debugging / interaction
+- [X] Create I/O Bus
+- [X] Add I/O Devices
+  - [X] Add Hardware timers (device 0x0)
+- [X] Memory can be written from serial register interface; allows us to bypass ROM (w/ DIP switch) to avoid re-building design to test out the CPU.
+
 
 ## To do next
 
-- [ ] Build ALU
-- [ ] Fetch from ROM when using bank 7
-- [ ] Supply some ROM instructions (figure out how to load 64K ROM using a file reader later)
-- [ ] Add some basic instructions to Execute phase to see if processor can do anything useful
+- [ ] Memory arbitration! We've got a logic tied up in the top level that doesn't actually work well anyway (CPU will crash if serial reg is reading memory). Need to fix this as we'll need memory arbitration to support video generation in the future.
+- [ ] Build out ld, st instructions so we can start working w/ memory
+- [ ] Bus design is... not great; improve by having devices listen for their number to be called so that they don't have to be internal to the bus logic
+  - [ ] In doing this, it seems like devices are asserting their data all the time, even when we should only be asserting when our device is asserted.
+- [ ] Serial/Io Board compete for memory and I/O -- this causes the CPU to crash. Need to Implement better arbitration (we'll need it anyway later)
+- [ ] Build Complete ALU with multiply, divide, and modulo. This is going to need a clocked design (impacts CPU implementation)
+- [ ] Improve hardware timers:
+  - [ ] Time keeping sucks; it will quickly get out of sync w/ a real clock
+  - [ ] I _think_ it's possible to read very wrong times; may need to hold the rtc results until the hours byte has been read so that there's no chance of reading the wrong time
+
 
 ## To do later
 
-- [ ] Add serial connectivity to allow more debugging / interaction
+- [ ] Connect w/ a real RTC module, like https://www.sparkfun.com/products/16281
 - [ ] Complete 6516 processor
 - [ ] Add 6516 FPU
-- [ ] Create I/O Bus
 - [ ] Add I/O Devices
-  - [ ] Add Hardware timers (device 0x0)
   - [ ] Add console device (device 0x8) & COM2-4 (device 0x9-0xB)
   - [ ] Add Keyboard I/O
   - [ ] Add controllers (device 0x4)
