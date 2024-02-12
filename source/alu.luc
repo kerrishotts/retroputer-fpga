@@ -84,7 +84,7 @@ module alu (
         internal_result = 17h000;
     }
     
-    zero = internal_result == 0;
+    zero = internal_result[15:0] == 0;
     internal_negative = internal_result[15];
     negative = internal_negative;
     carry = size_r ? /* BYTE */ |internal_result[16:8] : /* WORD */ internal_result[16];
