@@ -10,7 +10,7 @@ const idxs = {
 	reg: [{h:"A al", b:16, w:4}, {h:"B bl", b:16, w:4}, {h:"C cl", b:16, w:4}, {h:"D dl", b:16, w:4},
 	    {h:"X", b:16, w:4}, {h:"Y", b:16, w:4}, {h:"BP", b:16, w:4}, {h:"SP", b:16, w:4}, 
 		{h:"IRQ     EDISNCVZ", b:2, w:16}, {h:"PC", b:16, w:4}, {h:".page3page2page1", b:2, w:16}, {h:"MPtr", b:16, w:4}, 
-		{h:"", b:16, w:2}, {h:"", b:16, w:2}, {h: "", b:16, w:2}, {h:"", b:16, w:2}],
+		{h:"", b:16, w:2}, {h:"", b:16, w:2}, {h: "InHi", b:16, w:4}, {h:"InLo", b:16, w:4}],
 	mem: [{h:"00", b:16, w:2}, {h:"01", b:16, w:2}, {h:"02", b:16, w:2}, {h:"03", b:16, w:2}, 
 	     {h:"04", b:16, w:2}, {h:"05", b:16, w:2}, {h:"06", b:16, w:2}, {h:"07", b:16, w:2}, 
 		 {h:"08", b:16, w:2}, {h:"09", b:16, w:2}, {h:"0A", b:16, w:2}, {h:"08", b:16, w:2},
@@ -116,9 +116,9 @@ export default function App() {
 						length = 16;
 					}
 					if (which === "reg") {
-						port.isOpen && port.drain(() => port.write([0x4b,0x00,0x00,0x00,0xC0]));
+						port.isOpen && port.drain(() => port.write([0x4f,0x00,0x00,0x00,0xC0]));
 						width = 16;
-						length = 12;
+						length = 16;
 					}
 					if (which === "mem") {
 						port.isOpen && port.drain(() => port.write([0x4f,memBase & 0x00FF,(memBase & 0xFF00) >> 8, (memBase & 0x70000) >> 16,0x00]));
@@ -146,7 +146,7 @@ export default function App() {
 						setPortData([]);
 					}
 				}
-			},  250);
+			},  125);
 		};
 		port.on("open", handler);
 
