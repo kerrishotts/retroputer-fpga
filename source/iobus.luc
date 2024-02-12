@@ -1,0 +1,110 @@
+global IoInterface {
+  struct in {
+    en,                           // bus is enabled
+    addr[8],                      // I/O address to read from or write to 
+    wr_data[8],                   // data to write to the bus 
+    write,                        // if set, write the data to the bus
+    read,                         // if set, read data from the bus 
+    irq_ack[16]                   // acknowledge device IRQs on bus
+  }
+  
+  struct device_in {
+    en,                           // device is enabled
+    addr[8],                      // I/O address to read from or write to 
+    wr_data[8],                   // data to write to the device 
+    write,                        // if set, write the data to the device
+    read,                         // if set, read data from the device
+    irq_ack[16]                   // requested IRQ acknowledged
+  }
+    
+  struct out {
+    rdy,                          // bus is ready for a command
+    rd_data[8],                   // data read from the bus
+    rd_valid,                     // data is valid
+    wr_valid,                     // write was valid
+    irq[16],                      // IRQs for all devices
+    irq_service,                  // Tell CPU there's an IRQ waiting
+    timeout                       // tell someone when a timeout occurs
+  }
+  
+  struct device_out {
+    rdy[16],                      // device is ready for a command
+    rd_data[8],                   // data read from the bus
+    rd_valid[16],                 // data is valid
+    wr_valid[16],                 // write was valid 
+    irq[16]                       // device would like to send an irq
+  }
+}
+
+module iobus (
+    input clk,  // clock
+    input rst,  // reset
+    
+    input<IoInterface.in> bus_in,
+    output<IoInterface.out> bus_out,
+    
+    output<IoInterface.device_in> device_in,
+    input<IoInterface.device_out> device_out
+    
+    
+  ) {
+  
+  .clk(clk), .rst(rst) {
+    fsm state = {READY, READ, WRITE, WAIT, TIMEOUT};
+    dff<IoInterface.in> temp;
+    
+    dff timeout[32];
+  }
+  
+  //sig device_sel[4];
+  
+  always {
+    //device_sel = temp.q.addr[7:4];
+    device_in.read = 0;
+    device_in.write = 0;
+    device_in.en = 1bx;
+    device_in.addr = 8bx;
+    device_in.wr_data = 8bx;
+    device_in.irq_ack = bus_in.irq_ack;
+    
+    bus_out.rd_valid = |device_out.rd_valid;
+    bus_out.rdy = state.q == state.READY;
+    bus_out.rd_data = device_out.rd_data;
+    bus_out.wr_valid = |device_out.wr_valid;
+    bus_out.irq = device_out.irq;
+    bus_out.irq_service = |device_out.irq;
+    bus_out.timeout = 0;
+    
+    case (state.q) {
+      state.READY: 
+        state.d = bus_in.read ? state.READ : bus_in.write ? state.WRITE : state.READY;
+        if (bus_in.read | bus_in.write) timeout.d = 32h1FFFFFFF;
+        temp.d = bus_in;
+      state.READ:
+        device_in.read = 1;
+        device_in.en = 1;
+        device_in.wr_data = 0;
+        device_in.addr = temp.q.addr;
+        device_in.write = 0;
+        if (|device_out.rd_valid) state.d = state.WAIT;
+        timeout.d = timeout.q - 1;
+        if (timeout.q == 0) state.d = state.TIMEOUT;
+      state.WRITE:
+        device_in.read = 0;
+        device_in.write = 1;
+        device_in.en = 1;
+        device_in.wr_data = temp.q.wr_data;
+        device_in.addr = temp.q.addr;
+        if (|device_out.wr_valid) state.d = state.WAIT;
+        if (timeout.q == 0) state.d = state.TIMEOUT;
+      state.WAIT:
+        state.d = state.READY;
+      state.TIMEOUT:
+        bus_out.rd_data = 0;
+        bus_out.rd_valid = 1;
+        bus_out.wr_valid = 1;
+        bus_out.timeout = 1;
+        state.d = state.READY;
+    }
+  }
+}

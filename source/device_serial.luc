@@ -1,0 +1,283 @@
+module device_serial #(
+    CONSOLE_DEVICE_NUM = 4h8
+)(
+    input clk,  // clock
+    input rst,  // reset
+    
+    input usb_rx,                       // USB serial port pins for the serial interface
+    output usb_tx,
+    
+    output<Memory.in> mem_in,           // Serial interface can read from and write to memory
+    input<Memory.out> mem_out,
+    
+    output<IoInterface.in> bus_in,      // Serial interface can read from and write to the system's I/O bus
+    input<IoInterface.out> bus_out,
+    
+    input<IoInterface.device_in> device_in,    // ... but serial interface can also act as a device (system console)
+    output<IoInterface.device_out> device_out,
+    
+    output dbg_reg_sel[4],              // Serial interface can inspect CPU registers & write back to them
+    output dbg_reg_wr_data[16],
+    output dbg_reg_write,
+    input dbg_reg[12][16],
+    input dbg_inst[32],
+    
+    output nmi
+  ) {
+
+  .clk(clk), .rst(rst) {
+    dff waiting_for_io;
+    dff waiting_for_io_write;
+    dff waiting_for_io_read;
+    dff waiting_for_mem;
+    dff waiting_for_mem_write;
+    dff waiting_for_mem_read;
+    lru_cache cache(#ENTRIES(1), #WORD_SIZE(8), #AGE_BITS(1));
+    fifo fifo_console_in(#SIZE(8), #DEPTH(256));
+    fifo fifo_console_out(#SIZE(8), #DEPTH(256));
+    #CLK_FREQ(81250000) {
+    reg_interface reg_interface;
+      #BAUD(1000000) {        // The baud rate of the uarts
+        uart_rx uart_rx;      // The uart required by the register interace
+        uart_tx uart_tx;      // The uart required by the register interace
+      }
+    }
+    
+    dff irq_service;
+  }
+  
+  sig serial_bank[2];         // what region of the machine are reading/writing?
+  sig device_sel[4];
+  sig device_port[4];
+  const RAM_BANK = 2b00;
+  const DEVICE_BANK = 2b01;
+  const BUS_BANK = 2b10;
+  const REGISTER_BANK = 2b11;
+  
+  const SINGLE_STEP = 3h0;
+  const CONSOLE_DEVICE = 3h1;
+  const COM2_DEVICE = 3h2;
+  const COM3_DEVICE = 3h3;
+  const COM4_DEVICE = 3h4;
+  
+  const PORT_CTRL = 4h0;
+  const PORT_SEND = 4h1;
+  const PORT_RECV = 4h2;
+  const PORT_RD_RDY = 4h3;
+  const PORT_WR_RDY = 4h4;
+
+  always {
+  
+    /* don't single step the CPU unless we explicitly ask for it */
+    nmi = 0;
+    
+    /* don't care about which CPU register is selected; but don't write anything to it unless asked */
+    dbg_reg_sel = 4bx;
+    dbg_reg_wr_data = 8bx;
+    dbg_reg_write = 0;
+
+    /* register interface; setup from https://github.com/chuckb/AuHelloWorld/blob/main/fpga/source/au_top.luc */
+    usb_tx = uart_tx.tx;
+    uart_rx.rx = usb_rx;
+    uart_tx.block = 0;
+    uart_tx.new_data = reg_interface.new_tx_data;
+    uart_tx.data = reg_interface.tx_data;
+    reg_interface.tx_busy = uart_tx.busy;
+    reg_interface.new_rx_data = uart_rx.new_data;
+    reg_interface.rx_data = uart_rx.data;
+    reg_interface.regIn.drdy = 0;
+    reg_interface.regIn.data = 32bx;
+   
+    // connect the cache to memory
+    mem_in = cache.mem_in;
+    cache.mem_out = mem_out;
+    
+    // set cache defaults (don't care about data, but don't flush, don't write, and don't read)
+    cache.flush = 0;
+    cache.wr_addr = 18bx;
+    cache.wr_data = 8bx;
+    cache.wr_valid = 0;
+    cache.rd_addr = 18bx;
+    cache.rd_cmd_valid = 0;
+    
+    // Set bus defaults (don't care about enabled, address or data; but don't read or write)
+    bus_in.en = 1bx;
+    bus_in.addr = 8bx;
+    bus_in.wr_data = 8bx;
+    bus_in.write = 0;
+    bus_in.read = 0;
+    bus_in.irq_ack = 16bx;
+    
+    // set console in defaults (don't care about data; don't read next or write)
+    fifo_console_in.din = 8bx;
+    fifo_console_in.rget = 0;
+    fifo_console_in.wput = 0;
+    
+    // set console out defaults (don't care about data; don't read next or write)
+    fifo_console_out.din = 8bx;
+    fifo_console_out.rget = 0;
+    fifo_console_out.wput = 0;
+    
+    /* handle the device side of things */
+    device_out.rd_valid[CONSOLE_DEVICE_NUM] = 0;
+    device_out.rd_data = 8bx;
+    device_out.wr_valid[CONSOLE_DEVICE_NUM] = !fifo_console_out.full;
+    device_out.rdy[CONSOLE_DEVICE_NUM] = 1b1;
+    device_sel = device_in.addr[7:4];
+    device_port = device_in.addr[3:0];
+    device_out.irq = 16bx;
+    device_out.irq[CONSOLE_DEVICE_NUM] = irq_service.q;
+    
+    if (device_in.irq_ack[CONSOLE_DEVICE_NUM]) irq_service.d = 0; // register irq acknowledgement
+    
+    if (device_in.en && device_sel == CONSOLE_DEVICE_NUM) {
+      if (device_in.read) {
+        case (device_port) {
+          PORT_RECV:
+            if (!fifo_console_in.empty) {
+              device_out.rd_data = fifo_console_in.dout;
+              device_out.rd_valid[CONSOLE_DEVICE_NUM] = 1;
+              fifo_console_out.rget = 1;
+            } else {
+              device_out.rd_data = 0; // return null; but this isn't actually a valid piece of data
+              device_out.rd_valid[CONSOLE_DEVICE_NUM] = 1; 
+            }
+          PORT_RD_RDY:
+            device_out.rd_data = c{7b0, fifo_console_in.empty};
+            device_out.rd_valid[CONSOLE_DEVICE_NUM] = 1;    
+          PORT_WR_RDY:
+            device_out.rd_data = c{7b0, !fifo_console_out.full};
+            device_out.rd_valid[CONSOLE_DEVICE_NUM] = 1;
+          default:
+            device_out.rd_data = device_port;
+            device_out.rd_valid[CONSOLE_DEVICE_NUM] = 1;
+        }
+      }
+      if (device_in.write) {
+        case (device_port) {
+          PORT_SEND:
+            if (!fifo_console_out.full) {
+              fifo_console_out.din = device_in.wr_data;
+              fifo_console_out.wput = 1;
+            }
+        }    
+      }
+    }
+    
+    
+    /* handle register interface commands */
+    if (reg_interface.regOut.new_cmd) {
+      serial_bank = reg_interface.regOut.address[31:30];
+      if (reg_interface.regOut.write) {
+        // WRITING to the device
+        case (serial_bank) {
+          RAM_BANK: // write to RAM
+            waiting_for_mem.d = 1;
+            waiting_for_mem_write.d = 1;
+          DEVICE_BANK:
+            case (reg_interface.regOut.address[2:0]) {
+              SINGLE_STEP: nmi = 1;
+              CONSOLE_DEVICE: 
+                // store character into console's input fifo so it can be read out later
+                // like a keyboard buffer. If the buffer is full, the data is ignored
+                if (!fifo_console_in.full) {
+                  fifo_console_in.din = reg_interface.regOut.data[7:0];
+                  fifo_console_in.wput = 1;
+                  irq_service.d = 1;
+                }
+            }
+          BUS_BANK: // write i/o 
+            waiting_for_io.d = 1;
+            waiting_for_io_write.d = 1;
+          REGISTER_BANK: // write register 
+            dbg_reg_sel = reg_interface.regOut.address[3:0];
+            dbg_reg_wr_data = reg_interface.regOut.data[15:0]; 
+            dbg_reg_write = 1;
+        }
+      } else {
+        // READING from the device
+        case (serial_bank) {
+          RAM_BANK: 
+            waiting_for_mem.d = 1;
+            waiting_for_mem_read.d = 1;
+          DEVICE_BANK:
+            case (reg_interface.regOut.address[2:0]) {
+              CONSOLE_DEVICE: 
+                // read a character from the output portion of the console, if it's available.
+                if (!fifo_console_out.empty) {
+                  reg_interface.regIn.data = fifo_console_out.dout;
+                  reg_interface.regIn.drdy = 1;
+                  fifo_console_out.rget = 1; // advance to next character, if any
+                }
+            }          
+          BUS_BANK: // read i/o 
+            waiting_for_io.d = 1;
+            waiting_for_io_read.d = 1;
+
+          REGISTER_BANK: // read register
+            case (reg_interface.regOut.address[3:0]) {
+              4hC: reg_interface.regIn.data = 0;
+              4hD: reg_interface.regIn.data = 0;
+              4hE: reg_interface.regIn.data = dbg_inst[31:16];  // pseudo instruction register (hi)
+              4hF: reg_interface.regIn.data = dbg_inst[15:0];   // pseudo instruction register (lo)
+              default:
+                reg_interface.regIn.data = dbg_reg[reg_interface.regOut.address[3:0]];
+            }
+            reg_interface.regIn.drdy = 1;
+            
+          //default:
+            //reg_interface.regIn.data = 0;
+            //reg_interface.regIn.drdy = 1;
+        }
+      }
+    }
+    if (waiting_for_mem.q) {
+      if (waiting_for_mem_write.q) {
+        if (cache.wr_ready) {
+          cache.wr_addr = reg_interface.regOut.address[18:0];
+          cache.wr_data = reg_interface.regOut.data[7:0];
+          cache.wr_valid = 1;
+          waiting_for_mem.d = 0;
+          waiting_for_mem_write.d = 0;
+          
+          if (cache.flush_ready) cache.flush = 1;
+        }
+      }
+      if (waiting_for_mem_read.q) {
+        if (cache.rd_ready) {
+          cache.rd_addr = reg_interface.regOut.address[18:0];
+          cache.rd_cmd_valid = 1;
+        }
+        if (cache.rd_data_valid) {
+          reg_interface.regIn.data = cache.rd_data[7:0];
+          reg_interface.regIn.drdy = 1;
+          waiting_for_mem_read.d = 0; 
+          waiting_for_mem.d = 0;
+        }
+      }
+    }
+    if (waiting_for_io.q) {
+      if (waiting_for_io_write.q) {
+        if (bus_out.rdy) {
+          bus_in.write = 1;
+          bus_in.addr = reg_interface.regOut.address[7:0];
+          bus_in.wr_data = reg_interface.regOut.data[7:0];
+          waiting_for_io.d = 0;
+          waiting_for_io_write.d = 0;
+        }
+      }
+      if (waiting_for_io_read.q) {
+        if (bus_out.rdy) {
+          bus_in.addr = reg_interface.regOut.address[7:0];
+          bus_in.read = 1;
+        }
+        if (bus_out.rd_valid) {
+          reg_interface.regIn.data = bus_out.rd_data;
+          reg_interface.regIn.drdy = 1;
+          waiting_for_io.d = 0;
+          waiting_for_io_read.d = 0;
+        }
+      }
+    }    
+  }
+}

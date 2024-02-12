@@ -16,7 +16,8 @@ global Reg {
 module cpu (
     input clk,  // clock
     input rst,  // reset
-    input trap,          // trap reqeusted from I/O (read irq)
+    input irq_service,   // trap reqeusted from I/O (read irq)
+    input nmi,           // nmi (non-maskable interrupt)
     input  irq[16],      // IRQ signals from bus
     output irq_ack[16],  // IRQ acknowledgements
     input ready,         // ready pin (if 1, CPU will run)
@@ -33,12 +34,15 @@ module cpu (
     output io_read,
     output io_write,
     input io_rdy,        // if 1, I/O is ready to be read
+    input io_timeout,    // if 1, I/O request timed out
 
     /* debugging */    
     
     input dbe,             // debugger enabled
+    output dbg_reg[12][16],// DEBUG output of all registers
+    output dbg_inst[32],   // DEBUG output of instruction
     input dbg_reg_sel[4],  // register select
-    output dbg_reg_val[16],// output of the register being selected
+//    output dbg_reg_val[16],// output of the register being selected
     input dbg_reg_data[16],// data to write into selected register 
     input dbg_reg_write    // if set, write the data into the register
     
@@ -90,7 +94,8 @@ module cpu (
     alu.a = 16bx;
     alu.b = 16bx;
     
-    dbg_reg_val = reg.q[dbg_reg_sel];// output the selected register for debugging purposes
+    dbg_reg = reg.q;
+    dbg_inst = c{inst.q[0], inst.q[1], inst.q[2], inst.q[3]};
     if (dbg_reg_write) {
       reg.d[dbg_reg_sel] = dbg_reg_data;
     }
@@ -156,29 +161,13 @@ module cpu (
           // fix ups -- need to account for having read too much of the instruction
           fixup = (instOp == Op.LD_FIXUP && inst.q[1] ==0 && inst.q[0][0]) ||
                   ((instOp == Op.LOOP_FIXUP || instOp == Op.BR_FIXUP) && inst.q[1][0]);
-/*                
-          case (instOp) {
-            Op.LD_FIXUP:                            // if loading absolute with AL-DL, need fixup
-              if (inst.q[1] == 8h00 && inst.q[0][0]) {
-                fixup = 1b1;
-              }
-            Op.LOOP_FIXUP:                          // if short flag is specified on LOOP or BR, fixup
-              if (inst.q[1][0]) {
-                fixup = 1b1;
-              }
-            Op.BR_FIXUP:
-              if (inst.q[1][0]) {
-                fixup = 1b1;
-              }
-          }
-*/          
           if (fixup) {
             // move MP and PC back by one
             reg.d[Reg.MP] = reg.q[Reg.MP] - 1;
             reg.d[Reg.PC] = reg.q[Reg.MP] - 1;
           }
-          state.d = state.DECODE_2;                  // we've got enough to continue
-        state.DECODE_2:
+        //  state.d = state.DECODE_2;                  // we've got enough to continue
+        //state.DECODE_2:
           case (instOp) {
             Op.NOT_NEG_EXC_FIXUP:                   // select the corret opcode based on second byte
               case (inst.q[1][5:4]) {
@@ -215,7 +204,6 @@ module cpu (
             alu.carry_in = reg.q[Reg.IRQ_FLAGS][2];
             skip = 0; // if skip isn't set, we'll store the result of aluOp back in dest
             case (instOpExec.q[2:0]) {
-              default: alu.op = AluOps.ADD;
               Op.ADD_D_S: alu.op = AluOps.ADD;
               Op.SUB_D_S: alu.op = AluOps.SUB;
               Op.CMP_D_S: alu.op = AluOps.SUB; skip = 1; // cmp is subtract, but don't store result
@@ -231,6 +219,7 @@ module cpu (
               Op.SMUL_D_S: alu.op = AluOps.SMUL;
               Op.SMOD_D_S: alu.op = AluOps.SMOD;
               Op.SDIV_D_S: alu.op = AluOps.SDIV;
+              default: alu.op = AluOps.ADD;
             }
             if (!skip) {
               if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = alu.result[7:0];
@@ -274,6 +263,7 @@ module cpu (
             destRegSize = inst.q[1][4];
             io_read = ~io_rdy;
             port = inst.q[2]; 
+            if (io_timeout) reg.d[Reg.IRQ_FLAGS][7] = 1; // set EXception when IO times out
             if (io_rdy) {
               if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = io_in;
               else             /* WORD */ reg.d[destReg] = c{8h00, io_in};
@@ -292,12 +282,13 @@ module cpu (
               state.d = state.HALT;
           
         state.NEXT: 
+          // TODO: handle IRQs
           state.d = state.FETCH_1;                  // when done, go back to fetch the next instruction
           if (dbe & reg.q[Reg.IRQ_FLAGS][4]) {      // unless debugger is attached and single step enabled
             state.d = state.HALT;                   // ... in which case, halt
           }
         state.HALT:
-          if (trap & irq[7]) {                      // wait until trap asserted, IRQ has high bit, so NMI
+          if (irq_service & nmi) {                  // wait until trap asserted, IRQ has high bit, so NMI
             state.d = state.FETCH_1;                // ... continue execution
           }
       }

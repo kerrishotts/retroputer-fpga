@@ -4,17 +4,11 @@ global Timer_modes {
   const MULTI_SHOT = 2;
   const RANDOM = 3;
 }
-module device_timers (
+module device_timers #(RTC_DEVICE_NUM = 4h0)(
     input clk,  // clock
     input rst,  // reset
-    input port_sel[4],               // port select
-    input io_in[8],               // data to write
-    output io_out[8],             // read data
-    input io_read,                // request to read from io 
-    input io_write,               // request to write to io 
-    output rd_valid,              // what's on io_out is valid
-    output wr_rdy,                // ready to write more 
-    output irq_service            // if set, fire an interrupt!
+    input<IoInterface.device_in> device_in,
+    output<IoInterface.device_out> device_out
   ) {
   .clk(clk), .rst (rst) {
     dff ms[17];                       // milliseconds counter
@@ -26,22 +20,36 @@ module device_timers (
     dff timer_cur[5][16];         // current value for each timer
     dff timer_dur[5][16];         // duration for each timer
     dff timer_modes[5][2];        // each timer has a two-bit mode 
+    dff irq_service;
     pn_gen rn;
   }
+  
+  sig device_sel[4];
+  sig port_sel[4];
+  
   var r, i;
   
   always {
-    io_out = 8hxx;
-    irq_service = 0;
+    // set default device outputs; no irq, read isn't valid, and we're ready for anything
+    device_out.rd_data = 8hxx;
+    device_out.irq = 16bx;
+    device_out.rd_valid[RTC_DEVICE_NUM] = 0;
+    device_out.rdy[RTC_DEVICE_NUM] = 1;
+    device_out.wr_valid[RTC_DEVICE_NUM] = 1;
+    device_out.irq[RTC_DEVICE_NUM] = irq_service.q;
+    if (device_in.irq_ack[RTC_DEVICE_NUM]) irq_service.d = 0; // register irq acknowledgement
+    
+    device_sel = device_in.addr[7:4];
+    port_sel = device_in.addr[3:0];
+    
+    // configure random number generator
     rn.seed = 0;
     rn.next = 0;
-    rd_valid = 1bx;
-    wr_rdy = 1;
     
     timer_modes.d[4] = Timer_modes.RANDOM;
     
     ms.d = ms.q + 1;                          // millisecond timer
-    if (ms.q >= 90241 /*81249*/) {                      // at 81.25MHz, 81250 ticks equals a millisecond
+    if (ms.q >= 90241 /*81249*/) {            // at 81.25MHz, 81250 ticks equals a millisecond
       ms.d = 0;
       hs.d = hs.q + 1;                        // add one to tick the hundredths timer
 
@@ -55,7 +63,7 @@ module device_timers (
               timer_read.d[i] = timer_cur.q[i];
               timer_cur.d[i] = 0;
               timer_dur.d[i] = 0;
-              irq_service = 1;
+              irq_service.d = 1;
             }
           Timer_modes.MULTI_SHOT:
             if (timer_cur.q[i] < timer_dur.q[i]) {
@@ -63,7 +71,7 @@ module device_timers (
             } else {
               timer_read.d[i] = timer_read.q[i] + 1;
               timer_cur.d[i] = 0;
-              irq_service = 1;
+              irq_service.d = 1;
             }
         }
       }        
@@ -72,7 +80,7 @@ module device_timers (
     if (hs.q >= 9) {
       hs.d = 0;
       rtc.d[3] = rtc.q[3] + 1;                // increment hundredths
-      irq_service = 1;                        // signal CPU that time changed
+      irq_service.d = 1;                      // signal CPU that time changed
       if (rtc.q[3] >= 99) {                   // ... about to roll over?
         rtc.d[3] = 0;                         // ... reset hundredths to zero
         rtc.d[2] = rtc.q[2] + 1;              // ... increment seconds
@@ -102,65 +110,70 @@ module device_timers (
       timer_read_read.d[i] = 0;              // reset timer read detector to zero after we handle it
     }
   
-    
-    if (io_write) {
-      case (port_sel) {
-        4h0: rtc.d[4h0] = io_in;          // setting the real time clock occurs only when HOURS is written
-             rtc.d[4h1] = temp.q[4h1];
-             rtc.d[4h2] = temp.q[4h2];
-             rtc.d[4h3] = temp.q[4h3];
-        4h4: timer_dur.d[0] = c{io_in, temp.q[4h5]};
-             timer_cur.d[0] = 0;
-        4h6: timer_dur.d[1] = c{io_in, temp.q[4h7]};
-             timer_cur.d[1] = 0;
-        4h8: timer_dur.d[2] = c{io_in, temp.q[4h9]};
-             timer_cur.d[2] = 0;
-        4hA: timer_dur.d[3] = c{io_in, temp.q[4hB]};
-             timer_cur.d[3] = 0;
-        4hC: timer_modes.d[0] = io_in[1:0];
-             timer_modes.d[1] = io_in[3:2];
-             timer_modes.d[2] = io_in[5:4];
-             timer_modes.d[3] = io_in[7:6];
-        4hF: rtc.d[0] = 0;
-             rtc.d[1] = 0;
-             rtc.d[2] = 0;
-             rtc.d[3] = 0;
-             for(r=0;r<5;r++) {
-               timer_modes.d[r] = Timer_modes.DISABLED;
-               timer_read.d[r] = 0;
-               timer_read_read.d[r] = 0;
-               timer_cur.d[r] = 0;
-               timer_dur.d[r] = 0;
-             }
-        default:
-          temp.d[port_sel] = io_in;
+    if (device_in.en && device_sel == RTC_DEVICE_NUM) {
+      if (device_in.write) {
+        case (port_sel) {
+          4h0: rtc.d[4h0] = device_in.wr_data;          // setting the real time clock occurs only when HOURS is written
+               rtc.d[4h1] = temp.q[4h1];
+               rtc.d[4h2] = temp.q[4h2];
+               rtc.d[4h3] = temp.q[4h3];
+          4h4: timer_dur.d[0] = c{device_in.wr_data, temp.q[4h5]};
+               timer_cur.d[0] = 0;
+               timer_read.d[0] = 0; // reset the read count
+          4h6: timer_dur.d[1] = c{device_in.wr_data, temp.q[4h7]};
+               timer_cur.d[1] = 0;
+               timer_read.d[1] = 0; // reset the read count
+          4h8: timer_dur.d[2] = c{device_in.wr_data, temp.q[4h9]};
+               timer_cur.d[2] = 0;
+               timer_read.d[2] = 0; // reset the read count
+          4hA: timer_dur.d[3] = c{device_in.wr_data, temp.q[4hB]};
+               timer_cur.d[3] = 0;
+               timer_read.d[3] = 0; // reset the read count
+          4hC: timer_modes.d[0] = device_in.wr_data[1:0];
+               timer_modes.d[1] = device_in.wr_data[3:2];
+               timer_modes.d[2] = device_in.wr_data[5:4];
+               timer_modes.d[3] = device_in.wr_data[7:6];
+          4hF: rtc.d[0] = 0;
+               rtc.d[1] = 0;
+               rtc.d[2] = 0;
+               rtc.d[3] = 0;
+               for(r=0;r<5;r++) {
+                 timer_modes.d[r] = Timer_modes.DISABLED;
+                 timer_read.d[r] = 0;
+                 timer_read_read.d[r] = 0;
+                 timer_cur.d[r] = 0;
+                 timer_dur.d[r] = 0;
+               }
+          default:
+            temp.d[port_sel] = device_in.wr_data;
+        }
       }
-    }
-  
-    if (io_read) {
-      rd_valid = 1;
-      case (port_sel) {
-        4h0: io_out = rtc.q[0];                // might have to put a read hold on rtc to prevent issues on roll overs
-        4h1: io_out = rtc.q[1];
-        4h2: io_out = rtc.q[2];
-        4h3: io_out = rtc.q[3];
-        4h4: io_out = timer_read.q[0][15:8];   // high byte of timer clk 
-             timer_read_read.d[0] = 1;         // timer has been read!
-        4h5: io_out = timer_read.q[0][ 7:0];   // low byte of timer 0 
-        4h6: io_out = timer_read.q[1][15:8];   // high byte of timer 1
-             timer_read_read.d[1] = 1;         // timer has been read!
-        4h7: io_out = timer_read.q[1][ 7:0];   // low byte of timer 1
-        4h8: io_out = timer_read.q[2][15:8];   // high byte of timer 2 
-             timer_read_read.d[2] = 1;         // timer has been read!
-        4h9: io_out = timer_read.q[2][ 7:0];   // low byte of timer 2
-        4hA: io_out = timer_read.q[3][15:8];   // high byte of timer 3
-             timer_read_read.d[3] = 1;         // timer has been read!
-        4hB: io_out = timer_read.q[3][ 7:0];   // low byte of timer 3
-        4hC: io_out = c{timer_modes.q[3], timer_modes.q[2], timer_modes.q[1], timer_modes.q[0]};
-        4hD: io_out = timer_read.q[4][15:8];   // high byte of random 
-             timer_read_read.d[4] = 1;         // timer has been read!
-        4hE: io_out = timer_read.q[4][ 7:0];   // low byte of random
-        4hF: io_out = 0;                       // reset is always zero
+    
+      if (device_in.read) {
+        device_out.rd_valid[RTC_DEVICE_NUM] = 1;
+        case (port_sel) {
+          4h0: device_out.rd_data = rtc.q[0];                // might have to put a read hold on rtc to prevent issues on roll overs
+          4h1: device_out.rd_data = rtc.q[1];
+          4h2: device_out.rd_data = rtc.q[2];
+          4h3: device_out.rd_data = rtc.q[3];
+          4h4: device_out.rd_data = timer_read.q[0][15:8];   // high byte of timer clk 
+               timer_read_read.d[0] = 1;                     // timer has been read!
+          4h5: device_out.rd_data = timer_read.q[0][ 7:0];   // low byte of timer 0 
+          4h6: device_out.rd_data = timer_read.q[1][15:8];   // high byte of timer 1
+               timer_read_read.d[1] = 1;                     // timer has been read!
+          4h7: device_out.rd_data = timer_read.q[1][ 7:0];   // low byte of timer 1
+          4h8: device_out.rd_data = timer_read.q[2][15:8];   // high byte of timer 2 
+               timer_read_read.d[2] = 1;                     // timer has been read!
+          4h9: device_out.rd_data = timer_read.q[2][ 7:0];   // low byte of timer 2
+          4hA: device_out.rd_data = timer_read.q[3][15:8];   // high byte of timer 3
+               timer_read_read.d[3] = 1;                     // timer has been read!
+          4hB: device_out.rd_data = timer_read.q[3][ 7:0];   // low byte of timer 3
+          4hC: device_out.rd_data = c{timer_modes.q[3], timer_modes.q[2], timer_modes.q[1], timer_modes.q[0]};
+          4hD: device_out.rd_data = timer_read.q[4][15:8];   // high byte of random 
+               timer_read_read.d[4] = 1;                     // timer has been read!
+          4hE: device_out.rd_data = timer_read.q[4][ 7:0];   // low byte of random
+          4hF: device_out.rd_data = 0;                       // reset is always zero
+        }
       }
     }
  
