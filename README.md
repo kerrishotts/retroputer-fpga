@@ -25,15 +25,19 @@ Note: It's SUPER EARLY DAYS... nothing here is terribly useful. I'm also just le
 - [X] Add I/O Devices
   - [X] Add Hardware timers (device 0x0)
 - [X] Memory can be written from serial register interface; allows us to bypass ROM (w/ DIP switch) to avoid re-building design to test out the CPU.
-
+- [X] Memory arbitration! We've got a logic tied up in the top level that doesn't actually work well anyway (CPU will crash if serial reg is reading memory). Need to fix this as we'll need memory arbitration to support video generation in the future.
+- [X] Bus design is... not great; improve by having devices listen for their number to be called so that they don't have to be internal to the bus logic
+  - [X] In doing this, it seems like devices are asserting their data all the time, even when we should only be asserting when our device is asserted. UPDATE: no -- we should have indicated 0 states for all bytes (since we OR at the end).
+- [X] Serial/Io Board compete for memory and I/O -- this causes the CPU to crash. Need to Implement better arbitration (we'll need it anyway later) -- FIXED! (we still have bus artibration problems, but CPU no longer crashes)
 
 ## To do next
 
-- [ ] Memory arbitration! We've got a logic tied up in the top level that doesn't actually work well anyway (CPU will crash if serial reg is reading memory). Need to fix this as we'll need memory arbitration to support video generation in the future.
+- [ ] Build IO bus arbitration so that Serial, Io shield, CPU and other devices can interact w/ the bus w/o causing corruption
+- [ ] Update monitor to upload a .bin file into memory at a given location (instead of manually typing it in!)
+- [ ] Update monitor to dump memory contents
+- [ ] Add console input & output now that we have the console on device 8; this means figuring out panes so that we can switch between the console, memory, I/O, and CPU registers.
+- [ ] Figure out better ways to poll the device and display memory, I/O, and CPU info at the same time. Maybe a little state machine that cycles between these on a recurring timer?
 - [ ] Build out ld, st instructions so we can start working w/ memory
-- [ ] Bus design is... not great; improve by having devices listen for their number to be called so that they don't have to be internal to the bus logic
-  - [ ] In doing this, it seems like devices are asserting their data all the time, even when we should only be asserting when our device is asserted.
-- [ ] Serial/Io Board compete for memory and I/O -- this causes the CPU to crash. Need to Implement better arbitration (we'll need it anyway later)
 - [ ] Build Complete ALU with multiply, divide, and modulo. This is going to need a clocked design (impacts CPU implementation)
 - [ ] Improve hardware timers:
   - [ ] Time keeping sucks; it will quickly get out of sync w/ a real clock
@@ -42,6 +46,7 @@ Note: It's SUPER EARLY DAYS... nothing here is terribly useful. I'm also just le
 
 ## To do later
 
+- [ ] Test benches. We're flying by the seat of our pants atm.
 - [ ] Connect w/ a real RTC module, like https://www.sparkfun.com/products/16281
 - [ ] Complete 6516 processor
 - [ ] Add 6516 FPU

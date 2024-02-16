@@ -119,13 +119,25 @@ module device_serial #(
     fifo_console_out.wput = 0;
     
     /* handle the device side of things */
+    /*
     device_out.rd_valid[CONSOLE_DEVICE_NUM] = 0;
     device_out.rd_data = 8bx;
     device_out.wr_valid[CONSOLE_DEVICE_NUM] = !fifo_console_out.full;
     device_out.rdy[CONSOLE_DEVICE_NUM] = 1b1;
-    device_sel = device_in.addr[7:4];
-    device_port = device_in.addr[3:0];
     device_out.irq = 16bx;
+    device_out.irq[CONSOLE_DEVICE_NUM] = irq_service.q;
+    */
+
+        device_sel = device_in.addr[7:4];
+    device_port = device_in.addr[3:0];
+    
+    device_out.rd_valid = 16b0;
+    device_out.rd_data = 8b0;
+    device_out.wr_valid = 8b0;
+    device_out.wr_valid[CONSOLE_DEVICE_NUM] = !fifo_console_out.full;
+    device_out.rdy = 16b0;
+    device_out.rdy[CONSOLE_DEVICE_NUM] = 1b1;
+    device_out.irq = 16b0;
     device_out.irq[CONSOLE_DEVICE_NUM] = irq_service.q;
     
     if (device_in.irq_ack[CONSOLE_DEVICE_NUM]) irq_service.d = 0; // register irq acknowledgement
