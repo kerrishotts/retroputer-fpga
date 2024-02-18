@@ -32,7 +32,7 @@ Note: It's SUPER EARLY DAYS... nothing here is terribly useful. I'm also just le
 - [X] Build out ld, st instructions so we can start working w/ memory
 
 ## To do next
-
+- [ ] Add flag to invalidate LRU cache so serial register interface can always see latest data in memory
 - [ ] Update monitor to upload a .bin file into memory at a given location (instead of manually typing it in!)
 - [ ] Add dummy devices so we can safely use IN on ports we don't have anything attached on
 - [ ] Add console input & output now that we have the console on device 8; this means figuring out panes so that we can switch between the console, memory, I/O, and CPU registers.
