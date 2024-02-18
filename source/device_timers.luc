@@ -31,14 +31,6 @@ module device_timers #(RTC_DEVICE_NUM = 4h0)(
   
   always {
     // set default device outputs; no irq, read isn't valid, and we're ready for anything
-/*
-    device_out.rd_data = 8hxx;
-    device_out.irq = 16bx;
-    device_out.rd_valid[RTC_DEVICE_NUM] = 0;
-    device_out.rdy[RTC_DEVICE_NUM] = 1;
-    device_out.wr_valid[RTC_DEVICE_NUM] = 1;
-    device_out.irq[RTC_DEVICE_NUM] = irq_service.q;
-    */
     device_out.rd_data = 8b0;
     device_out.rd_valid = 16b0;
     device_out.rdy = 16b0;

@@ -13,6 +13,24 @@ global Reg {
   const MP = 4d11;
 }
 
+global Flags {
+  const EX = 3d7; // Exception
+  const ID = 3d6; // IRQ Disable
+  const IS = 3d5; // IRQ in service
+  const SS = 3d4; // Single Step 
+  const N = 3d3;  // negative
+  const C = 3d2;  // carry 
+  const V = 3d1;  // overflow 
+  const Z = 3d0;  // zero 
+}
+
+global AddressModes {
+  const IMMEDIATE = 2b00; // immediate (data is in the instruction)
+  const ABSOLUTE = 2b01;  // absolute (data is at the address, potentially indirected & indexed
+  const RELATIVE_BP = 2b10; // relative BP addressing, potentially indirected & indexed
+  const ABSOLUTE_DX = 2b11; // absolute D,X addressing, potentially indirected & indexed
+}
+
 module cpu (
     input clk,  // clock
     input rst,  // reset
@@ -41,8 +59,8 @@ module cpu (
     input dbe,             // debugger enabled
     output dbg_reg[12][16],// DEBUG output of all registers
     output dbg_inst[32],   // DEBUG output of instruction
+    output dbg_clocks[32], // DEBUG clocks
     input dbg_reg_sel[4],  // register select
-//    output dbg_reg_val[16],// output of the register being selected
     input dbg_reg_data[16],// data to write into selected register 
     input dbg_reg_write    // if set, write the data into the register
     
@@ -54,6 +72,14 @@ module cpu (
       dff inst[4][8];      // 32-bit instruction
       dff instOpExec[8];   // Final instruction to execute (after decodes & fixups)
       fsm state = { INIT, FETCH_1, FETCH_2, FETCH_3, FETCH_4, DECODE_1, DECODE_2, EXECUTE, NEXT, HALT };
+      fsm addrState = { START, IDX_X, INDIRECT_HI, INDIRECT_LO, IDX_Y, FETCH_WORD_HI, FETCH_WORD_LO, STORE_WORD_HI, STORE_WORD_LO };
+      dff addrIndirect[16];
+      dff ld_st_addr[19];
+      //dff tmpData[16];
+      dff cpu_clocks[16];
+      dff inst_clocks[16]; 
+      dff cpu_clocks_hold[16];
+      dff inst_clocks_hold[16];
     }  
   }
     alu alu; 
@@ -69,6 +95,20 @@ module cpu (
   sig destRegSize[1];
   sig srceReg[3];
   sig srceRegSize[1];
+  
+  sig addr_mm[2];
+  sig addr_i;
+  sig addr_x;
+  sig addr_y;
+  sig addr_orig[19];
+  //sig addr[19];
+  //sig addr_idx_y[19];
+  sig store;
+  
+  sig br_u;
+  sig br_w;
+  sig br_n;
+  sig br_flg[3];
   
   sig skip[1];
     
@@ -96,6 +136,7 @@ module cpu (
     
     dbg_reg = reg.q;
     dbg_inst = c{inst.q[0], inst.q[1], inst.q[2], inst.q[3]};
+    dbg_clocks = c{cpu_clocks_hold.q, inst_clocks_hold.q};
     if (dbg_reg_write) {
       reg.d[dbg_reg_sel] = dbg_reg_data;
     }
@@ -104,8 +145,9 @@ module cpu (
     instSize = instLUT.out[9:8];     // size is the top two bytes of instLUT's return
     instOp = instLUT.out[7:0];       // actual opcode is the bottom eight bytes... or a FIXUP, in which case we have to 
                                      // fix up PC & the opcode. 
-    
+    inst_clocks.d = inst_clocks.q + 1;
     if (ready) {                     // ready means we are aren't waiting on any external resources (memory, etc.)
+      cpu_clocks.d = cpu_clocks.q + 1;
       case (state.q) {
         state.INIT:
           reg.d[Reg.PC] = 16hFF00;   // Program Counter starts at 0xFF00 for bootstrap code (MMapped to 7FF00)
@@ -166,8 +208,7 @@ module cpu (
             reg.d[Reg.MP] = reg.q[Reg.MP] - 1;
             reg.d[Reg.PC] = reg.q[Reg.MP] - 1;
           }
-        //  state.d = state.DECODE_2;                  // we've got enough to continue
-        //state.DECODE_2:
+
           case (instOp) {
             Op.NOT_NEG_EXC_FIXUP:                   // select the corret opcode based on second byte
               case (inst.q[1][5:4]) {
@@ -228,6 +269,38 @@ module cpu (
             reg.d[Reg.IRQ_FLAGS][3:0] = c{alu.negative, alu.carry, alu.overflow, alu.zero};              
           }
           
+          if (instOpExec.q == Op.NOT_D || instOpExec.q == Op.NEG_D) {
+            destReg = inst.q[1][3:1];
+            destRegSize = inst.q[1][0];
+            alu.size_a = destRegSize;
+            alu.a = destRegSize ? /* BYTE */ reg.q[destReg][7:0] : reg.q[destReg];
+            alu.op = (inst.q[1][4]) ? AluOps.NEG : AluOps.NOT;
+            if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = alu.result[7:0];
+            else             /* WORD */ reg.d[destReg] = alu.result;
+            reg.d[Reg.IRQ_FLAGS][3:0] = c{alu.negative, alu.carry, alu.overflow, alu.zero};            
+          }
+          
+          if (instOpExec.q == Op.EXC_D) {
+            destReg = inst.q[1][3:1];
+            destRegSize = inst.q[1][0];
+            if (destRegSize) /* BYTE */ { reg.d[destReg][7:4] = reg.q[destReg][3:0]; reg.d[destReg][3:0] = reg.q[destReg][7:4]; }
+            else             /* WORD */ { reg.d[destReg][15:8]= reg.q[destReg][7:0]; reg.d[destReg][7:0] = reg.q[destReg][15:8]; }
+            // NOTE: does NOT set flags (unlike emulator; not sure we actually need to, and can't see a use case)
+          }
+          
+          if (instOpExec.q == Op.SWAP_D_S || instOpExec.q == Op.MOV_D_S) {
+            destReg = inst.q[1][7:5];
+            destRegSize = inst.q[1][4];
+            srceReg = inst.q[1][3:1];
+            srceRegSize = inst.q[1][0];
+            if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = reg.q[srceReg][7:0];
+            else             /* WORD */ reg.d[destReg] = reg.q[srceReg];
+            if (!instOpExec.q[0] /* SWAP */) {
+              if (srceRegSize) /* BYTE */ reg.d[srceReg][7:0] = reg.q[destReg][7:0];
+              else             /* WORD */ reg.d[srceReg] = reg.q[destReg];
+            } 
+          }
+          
           if (instOpExec.q == Op.LD_D_IMMW) {
             destReg = inst.q[0][3:1];
             reg.d[destReg] = c{inst.q[2], inst.q[3]};
@@ -236,6 +309,85 @@ module cpu (
           if (instOpExec.q == Op.LD_D_IMMB) {
             destReg = inst.q[0][3:1];
             reg.d[destReg][7:0] = inst.q[2];
+          }
+          
+          if (instOpExec.q == Op.LD_D_ADDR || instOpExec.q == Op.ST_S_ADDR) {
+            state.d = state.EXECUTE; // keep us in this state (we'll move forward after we ld or st)
+            store = instOpExec.q == Op.ST_S_ADDR; //inst.q[0][5]; // if not set, loading
+            destReg = inst.q[0][3:1];
+            destRegSize = inst.q[0][0];
+            addr_mm = inst.q[1][7:6];
+            addr_i = inst.q[1][5];
+            addr_x = inst.q[1][4];
+            addr_y = inst.q[1][3];
+            addr_orig = c{inst.q[1][2:0], inst.q[2], inst.q[3]};
+                        
+            case (addrState.q) {
+              addrState.START:
+                case (addr_mm) {
+                  AddressModes.RELATIVE_BP: ld_st_addr.d = c{addr_orig[18:16], addr_orig[15:0] + reg.q[Reg.BP]};
+                  AddressModes.ABSOLUTE_DX: ld_st_addr.d = addr_orig + c{reg.q[Reg.D], 3b0};
+                  default:                  ld_st_addr.d = addr_orig;
+                }
+                addrState.d = addr_x ? addrState.IDX_X : (addr_i ? addrState.INDIRECT_HI : 
+                              (store ? (destRegSize ? /*BYTE*/ addrState.STORE_WORD_LO : /*WORD*/ addrState.STORE_WORD_HI)
+                                     : (destRegSize ? /*BYTE*/ addrState.FETCH_WORD_LO : /*WORD*/ addrState.FETCH_WORD_HI)));
+              addrState.IDX_X:
+                ld_st_addr.d = ld_st_addr.q + reg.q[Reg.X];
+                addrState.d = addr_i ? addrState.INDIRECT_HI : 
+                              (store ? (destRegSize ? /*BYTE*/ addrState.STORE_WORD_LO : /*WORD*/ addrState.STORE_WORD_HI)
+                                     : (destRegSize ? /*BYTE*/ addrState.FETCH_WORD_LO : /*WORD*/ addrState.FETCH_WORD_HI));
+              addrState.INDIRECT_HI:
+                mapper.address = ld_st_addr.q;            // assert mapped address on address output
+                d_read = 1b1;                             // request READ from memory
+                if(d_rdy) {                               // when data is available
+                  ld_st_addr.d = ld_st_addr.q + 1;          // advance memory ahead by one
+                  addrIndirect.d[15:8] = d_in;            // load high bits of indirect address
+                  state.d = addrState.INDIRECT_LO;        // next state
+                }
+              addrState.INDIRECT_LO:
+                mapper.address = ld_st_addr.q;            // assert next mapped address on address output
+                d_read = 1b1;                             // request READ from memory
+                if(d_rdy) {                               // when data is available
+                  addrIndirect.d[7:0] = d_in;             // load low bits of indirect address
+                  ld_st_addr.d = c{addrIndirect.q[15:8], d_in};
+                  addrState.d = addr_y ? addrState.IDX_Y :
+                                (store ? (destRegSize ? /*BYTE*/ addrState.STORE_WORD_LO : /*WORD*/ addrState.STORE_WORD_HI)
+                                       : (destRegSize ? /*BYTE*/ addrState.FETCH_WORD_LO : /*WORD*/ addrState.FETCH_WORD_HI));
+                }
+              addrState.IDX_Y:
+                ld_st_addr.d = ld_st_addr.q + reg.q[Reg.Y];
+                addrState.d = (store ? (destRegSize ? /*BYTE*/ addrState.STORE_WORD_LO : /*WORD*/ addrState.STORE_WORD_HI)
+                                     : (destRegSize ? /*BYTE*/ addrState.FETCH_WORD_LO : /*WORD*/ addrState.FETCH_WORD_HI));
+              addrState.FETCH_WORD_HI:
+                mapper.address = ld_st_addr.q;
+                d_read = 1b1;                             // request READ from memory
+                if(d_rdy) {                               // when data is available
+                  ld_st_addr.d = ld_st_addr.q + 1;          // advance mem by one
+                  reg.d[destReg][15:8] = d_in;            // load in destination HI
+                  addrState.d = addrState.FETCH_WORD_LO;
+                }
+              addrState.FETCH_WORD_LO:
+                mapper.address = ld_st_addr.q;
+                d_read = 1b1;                             // request READ from memory
+                if(d_rdy) {                               // when data is available
+                  reg.d[destReg][7:0] = d_in;             // load in destination LO
+                  addrState.d = addrState.START;
+                  state.d = state.NEXT;                   // done; continue execution
+                }
+              addrState.STORE_WORD_HI:
+                mapper.address = ld_st_addr.q;
+                ld_st_addr.d = ld_st_addr.q + 1;          // advance mem by one
+                d_out = reg.q[destReg][15:8];             // store HI portion to memory
+                d_write = 1b1;                            // request WRITE to memory; we'll be paused until it's written
+                addrState.d = addrState.STORE_WORD_LO;
+              addrState.STORE_WORD_LO:
+                mapper.address = ld_st_addr.q;
+                d_out = reg.q[destReg][7:0];              // store LO portion to memory
+                d_write = 1b1;                            // request WRITE to memory; we'll be paused until it's written
+                addrState.d = addrState.START;
+                state.d = state.NEXT;                     // done; continue execution
+            }
           }
           
           if (instOpExec.q == Op.INC_D || instOpExec.q == Op.DEC_D || instOpExec.q == Op.LOOPS_ADR) {
@@ -287,9 +439,17 @@ module cpu (
           if (dbe & reg.q[Reg.IRQ_FLAGS][4]) {      // unless debugger is attached and single step enabled
             state.d = state.HALT;                   // ... in which case, halt
           }
+          cpu_clocks_hold.d = cpu_clocks.q;
+          inst_clocks_hold.d = inst_clocks.q;
+
+          cpu_clocks.d = 0;
+          inst_clocks.d = 0;
+          
         state.HALT:
           if (irq_service & nmi) {                  // wait until trap asserted, IRQ has high bit, so NMI
             state.d = state.FETCH_1;                // ... continue execution
+            cpu_clocks.d = 0;
+            inst_clocks.d = 0;
           }
       }
     }

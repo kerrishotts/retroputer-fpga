@@ -21,6 +21,7 @@ module device_serial #(
     output dbg_reg_write,
     input dbg_reg[12][16],
     input dbg_inst[32],
+    input dbg_clocks[32],
     
     output nmi
   ) {
@@ -119,16 +120,7 @@ module device_serial #(
     fifo_console_out.wput = 0;
     
     /* handle the device side of things */
-    /*
-    device_out.rd_valid[CONSOLE_DEVICE_NUM] = 0;
-    device_out.rd_data = 8bx;
-    device_out.wr_valid[CONSOLE_DEVICE_NUM] = !fifo_console_out.full;
-    device_out.rdy[CONSOLE_DEVICE_NUM] = 1b1;
-    device_out.irq = 16bx;
-    device_out.irq[CONSOLE_DEVICE_NUM] = irq_service.q;
-    */
-
-        device_sel = device_in.addr[7:4];
+    device_sel = device_in.addr[7:4];
     device_port = device_in.addr[3:0];
     
     device_out.rd_valid = 16b0;
@@ -228,8 +220,8 @@ module device_serial #(
 
           REGISTER_BANK: // read register
             case (reg_interface.regOut.address[3:0]) {
-              4hC: reg_interface.regIn.data = 0;
-              4hD: reg_interface.regIn.data = 0;
+              4hC: reg_interface.regIn.data = dbg_clocks[31:16];
+              4hD: reg_interface.regIn.data = dbg_clocks[15:0];
               4hE: reg_interface.regIn.data = dbg_inst[31:16];  // pseudo instruction register (hi)
               4hF: reg_interface.regIn.data = dbg_inst[15:0];   // pseudo instruction register (lo)
               default:

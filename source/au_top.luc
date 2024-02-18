@@ -58,7 +58,7 @@ module au_top (
       cpu cpu;
       ddr_arbiter mem_arbiter(#DEVICES(6));
       lru_cache cache(#ENTRIES(1), #WORD_SIZE(8), #AGE_BITS(1));
-      fsm state = { RUN_CPU, WAIT_MEM_READ, WAIT_IO_READ, WAIT_IO_READ_RDY, WAIT_IO_WRITE_RDY };
+      fsm state = { RUN_CPU, WAIT_MEM_READ, WAIT_MEM_WRITE, WAIT_IO_READ, WAIT_IO_READ_RDY, WAIT_IO_WRITE_RDY, MEM_FLUSH_CACHE };
       //fsm regint = { RUN, WAIT_READ, READ_IO };
       multi_seven_seg seg;
       
@@ -68,6 +68,9 @@ module au_top (
 
       dff led_waiting_for_io_read[1];
       dff io_read[8];
+      
+      dff tmp_addr[19];
+      dff tmp_d_out[8];
 
       device_timers rtc;
       device_serial serial;
@@ -163,6 +166,7 @@ module au_top (
     
     serial.dbg_reg = cpu.dbg_reg;
     serial.dbg_inst = cpu.dbg_inst;
+    serial.dbg_clocks = cpu.dbg_clocks;
     
     // hang devices off the bus
     rtc.device_in = iobus.device_in;
@@ -213,8 +217,8 @@ module au_top (
                     cpu.address[18:16]}, cpu.address[15:8], cpu.address[7:0]};
         
         case (reg_select.q) {
-          4hC: seg.values = {4h0, 4h0, 4h0, 4h0};
-          4hD: seg.values = {4h0, 4h0, 4h0, 4h0};
+          4hC: seg.values = {cpu.dbg_clocks[31:28], cpu.dbg_clocks[27:24], cpu.dbg_clocks[23:20], cpu.dbg_clocks[19:16]};
+          4hD: seg.values = {cpu.dbg_clocks[15:12], cpu.dbg_clocks[11:8] , cpu.dbg_clocks[7:4],   cpu.dbg_clocks[3:0]};
           4hE: seg.values = {cpu.dbg_inst[31:28], cpu.dbg_inst[27:24], cpu.dbg_inst[23:20], cpu.dbg_inst[19:16]};
           4hF: seg.values = {cpu.dbg_inst[15:12], cpu.dbg_inst[11:8], cpu.dbg_inst[7:4], cpu.dbg_inst[3:0]};
           default:
@@ -269,13 +273,19 @@ module au_top (
               cpu.ready = 1;                     // ... CPU can run 
               cpu.d_in = cache.rd_data;          // ... send the data in
               cpu.d_rdy = 1;                     // ... and notify CPU
-              state.d = state.RUN_CPU;           // ... move back to RUN CPU
             }
           }
         }
         if (cpu.d_write) {                   // requesting to write to memory
-          if (cache.wr_ready) {              // ... wait for the cache to be write ready 
-            cache.wr_valid = 1;              // ... notify cache to write the data; note no mask for ROM -- can't be read anyway.
+          if (cpu.address[18:16] != 3h7) {
+            if (cache.wr_ready) {              // ... can we write to memory? 
+              cache.wr_valid = 1;              // ... notify cache to write the data
+              state.d = state.MEM_FLUSH_CACHE; // ... flush cache
+            } else {
+              tmp_d_out.d = cpu.d_out;
+              tmp_addr.d = cpu.address;
+              state.d = state.WAIT_MEM_WRITE;  // ... wait until we can written
+            }
           }
         }
         
@@ -291,6 +301,19 @@ module au_top (
           cpu.d_in = cache.rd_data;          // ... send the data in
           cpu.d_rdy = 1;                     // ... and notify CPU
           state.d = state.RUN_CPU;           // ... move back to RUN CPU
+        }
+      state.WAIT_MEM_WRITE:                // don't run CPU
+        if (cache.wr_ready) {              // ... can we write to memory? 
+          cache.wr_data = tmp_d_out.q;
+          cache.wr_addr = tmp_addr.q;
+          cache.wr_valid = 1;              // ... notify cache to write the data
+          state.d = state.MEM_FLUSH_CACHE; 
+        }
+      state.MEM_FLUSH_CACHE:
+        // wait until the data is actually written, then flush.
+        if (cache.wr_ready && cache.flush_ready) {
+          cache.flush = 1;
+          state.d = state.RUN_CPU;
         }
       state.WAIT_IO_READ_RDY:
         if (iobus.bus_out.rdy) {

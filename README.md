@@ -29,15 +29,20 @@ Note: It's SUPER EARLY DAYS... nothing here is terribly useful. I'm also just le
 - [X] Bus design is... not great; improve by having devices listen for their number to be called so that they don't have to be internal to the bus logic
   - [X] In doing this, it seems like devices are asserting their data all the time, even when we should only be asserting when our device is asserted. UPDATE: no -- we should have indicated 0 states for all bytes (since we OR at the end).
 - [X] Serial/Io Board compete for memory and I/O -- this causes the CPU to crash. Need to Implement better arbitration (we'll need it anyway later) -- FIXED! (we still have bus artibration problems, but CPU no longer crashes)
+- [X] Build out ld, st instructions so we can start working w/ memory
 
 ## To do next
 
-- [ ] Build IO bus arbitration so that Serial, Io shield, CPU and other devices can interact w/ the bus w/o causing corruption
 - [ ] Update monitor to upload a .bin file into memory at a given location (instead of manually typing it in!)
-- [ ] Update monitor to dump memory contents
+- [ ] Add dummy devices so we can safely use IN on ports we don't have anything attached on
 - [ ] Add console input & output now that we have the console on device 8; this means figuring out panes so that we can switch between the console, memory, I/O, and CPU registers.
+- [ ] Simulate keyboard from input from serial until we have a physical keyboard
+- [ ] Simulate FRAME interrupt from video generator until we have that done
+- [ ] Simulate text display & memory (by reading Screen I/O and memory from monitor)
+- [] ... all so that we can get BASIC running!
+- [ ] Build IO bus arbitration so that Serial, Io shield, CPU and other devices can interact w/ the bus w/o causing corruption
+- [ ] Update monitor to dump memory contents
 - [ ] Figure out better ways to poll the device and display memory, I/O, and CPU info at the same time. Maybe a little state machine that cycles between these on a recurring timer?
-- [ ] Build out ld, st instructions so we can start working w/ memory
 - [ ] Build Complete ALU with multiply, divide, and modulo. This is going to need a clocked design (impacts CPU implementation)
 - [ ] Improve hardware timers:
   - [ ] Time keeping sucks; it will quickly get out of sync w/ a real clock

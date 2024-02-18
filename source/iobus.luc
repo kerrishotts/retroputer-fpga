@@ -56,10 +56,7 @@ module iobus (
     dff timeout[32];
   }
   
-  //sig device_sel[4];
-  
   always {
-    //device_sel = temp.q.addr[7:4];
     device_in.read = 0;
     device_in.write = 0;
     device_in.en = 1bx;
