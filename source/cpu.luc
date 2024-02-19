@@ -63,25 +63,35 @@ module cpu (
   .clk(clk) {
     .rst(rst) {
       dff reg[12][16];     // 12 16-bit registers (alternatively 24 8-bit registers)
+      
       dff inst[4][8];      // 32-bit instruction
       dff instOpExec[8];   // Final instruction to execute (after decodes & fixups)
-      fsm state = { INIT, FETCH_1, FETCH_2, FETCH_3, FETCH_4, DECODE_1, DECODE_2, EXECUTE, NEXT, HALT };
+      fsm state = { INIT, FETCH_1, FETCH_2, FETCH_3, FETCH_4, DECODE_1, DECODE_2, EXECUTE, NEXT, HALT, PUSH_LO, PUSH_HI, POP_HI, POP_LO };
+      fsm pushall_regs = { PUSH_SP, PUSH_A, PUSH_B, PUSH_C, PUSH_D, PUSH_X, PUSH_Y, PUSH_BP };
+      fsm popall_regs = { POP_BP, POP_Y, POP_X, POP_D, POP_C, POP_B, POP_A, POP_SP };
+      
+      addressing_unit calc_addr;      
       fsm addrState = { CALC, FETCH_WORD_HI, FETCH_WORD_LO, STORE_WORD_HI, STORE_WORD_LO };
-      dff addrIndirect[32];
       dff ld_st_addr[19];
-      //dff tmpData[16];
+      
       dff cpu_clocks[16];
       dff inst_clocks[16]; 
       dff cpu_clocks_hold[16];
       dff inst_clocks_hold[16];
       
-      addressing_unit calc_addr;
+      // these are used for "subroutines" where we can re-use states, but need to know the target & return state
+      dff target_reg[4];
+      dff target_reg_size;
+      dff next_state[state.WIDTH];
+      dff is_step_2;
+      
     }  
   }
-    alu alu; 
-  
+  alu alu;   
   instLUT instLUT; 
   memory_mapper mapper;
+  
+  decoder decode_flags(#WIDTH(3));
   
   sig instSize[2];
   sig instOp[8];
@@ -97,8 +107,6 @@ module cpu (
   sig addr_x;
   sig addr_y;
   sig addr_orig[19];
-  //sig addr[19];
-  //sig addr_idx_y[19];
   sig store;
   
   sig br_u;
@@ -108,7 +116,23 @@ module cpu (
   sig flg_value;
   sig take_br;
   
+  sig flg_ex;
+  sig flg_is;
+  sig flg_id;
+  sig flg_ss;
+  sig flg_c;
+  sig flg_n;
+  sig flg_v;
+  sig flg_z;
+  
   sig skip[1];
+  sig is_immediate;
+  sig is_nybble;
+  
+  sig is_push;
+  sig is_target_var;
+  
+  sig tmp_reg[16];
     
   always {
     /* defaults */
@@ -153,6 +177,18 @@ module cpu (
     calc_addr.i_x = 1bx;
     calc_addr.i_y = 1bx;
     calc_addr.i_is_br_call = 1bx;
+    
+    decode_flags.in = 0;
+    flg_ex = reg.q[Reg.IRQ_FLAGS][Flags.EX];
+    flg_is = reg.q[Reg.IRQ_FLAGS][Flags.IS];
+    flg_id = reg.q[Reg.IRQ_FLAGS][Flags.ID];
+    flg_ss = reg.q[Reg.IRQ_FLAGS][Flags.SS];
+    flg_n = reg.q[Reg.IRQ_FLAGS][Flags.N];
+    flg_c = reg.q[Reg.IRQ_FLAGS][Flags.C];
+    flg_v = reg.q[Reg.IRQ_FLAGS][Flags.V];
+    flg_z = reg.q[Reg.IRQ_FLAGS][Flags.Z];
+    
+    tmp_reg = 16bx;
     
     instLUT.opcode = inst.q[0];      // wire up the first instruction byte to instLUT so we can calculate instruction size
     instSize = instLUT.out[9:8];     // size is the top two bytes of instLUT's return
@@ -246,18 +282,28 @@ module cpu (
           state.d = state.NEXT;
 
           if ((instOpExec.q >= Op.ADD_D_S && instOpExec.q <= Op.XOR_D_S) || (instOpExec.q >= Op.MUL_D_S && instOpExec.q <= Op.SMOD_D_S)
-            || instOpExec.q == Op.SHL_D_S || instOpExec.q == Op.SHR_D_S) {
-            destReg = inst.q[1][7:5];
-            destRegSize = inst.q[1][4];
+            || instOpExec.q == Op.SHL_D_S || instOpExec.q == Op.SHR_D_S
+            || instOpExec.q == Op.SHL_D_IMMN || instOpExec.q == Op.SHR_D_IMMN
+            || (instOpExec.q >= Op.ADD_D_IMMW && instOpExec.q <= Op.XOR_D_IMMB)) {
+            is_immediate = (instOpExec.q >= Op.ADD_D_IMMW && instOpExec.q <= Op.XOR_D_IMMB);
+            is_nybble = instOpExec.q == Op.SHL_D_IMMN || instOpExec.q == Op.SHR_D_IMMN;
+            
+            destReg = is_immediate ? c{1b0, inst.q[0][2:1]} : inst.q[1][7:5];
+            destRegSize = is_immediate ? inst.q[0][0] : inst.q[1][4];
+
             srceReg = inst.q[1][3:1];
-            srceRegSize = inst.q[1][0];
+            srceRegSize = is_immediate ? destRegSize : inst.q[1][0]; // shouldn't matter for SHL/SHR
+            
             alu.size_a = destRegSize;
-            alu.a = destRegSize ? /* BYTE */ reg.q[destReg][7:0] : reg.q[destReg];
+            alu.a = destRegSize ? /* BYTE */ c{8b0, reg.q[destReg][7:0]} : reg.q[destReg];
             alu.size_b = srceRegSize;
-            alu.b = srceRegSize ? /* BYTE */ reg.q[srceReg][7:0] : reg.q[srceReg];
+            alu.b = srceRegSize ? /* BYTE */ c{8b0, reg.q[srceReg][7:0]} : reg.q[srceReg];
+            if (is_immediate) alu.b = srceRegSize ? /* BYTE */ inst.q[2] : c{inst.q[2], inst.q[3]};
+            if (is_nybble) alu.b = c{12b0, inst.q[1][3:0]};
             alu.carry_in = reg.q[Reg.IRQ_FLAGS][2];
             skip = 0; // if skip isn't set, we'll store the result of aluOp back in dest
-            case (instOpExec.q[2:0]) {
+            
+            case (is_immediate ? instOpExec.q[5:3] : instOpExec.q[2:0]) {
               Op.ADD_D_S: alu.op = AluOps.ADD;
               Op.SUB_D_S: alu.op = AluOps.SUB;
               Op.CMP_D_S: alu.op = AluOps.SUB; skip = 1; // cmp is subtract, but don't store result
@@ -275,6 +321,12 @@ module cpu (
               Op.SDIV_D_S: alu.op = AluOps.SDIV;
               default: alu.op = AluOps.ADD;
             }
+            if (is_nybble) {
+              alu.op = AluOps.SHL;
+              if (instOpExec.q == Op.SHR_D_IMMN) alu.op = AluOps.SHR;
+            }
+            
+            
             if (!skip) {
               if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = alu.result[7:0];
               else             /* WORD */ reg.d[destReg] = alu.result;
@@ -282,6 +334,10 @@ module cpu (
             reg.d[Reg.IRQ_FLAGS][3:0] = c{alu.negative, alu.carry, alu.overflow, alu.zero};              
           }
           
+          if (instOpExec.q == Op.TRAP_IMMB || instOpExec.q == Op.TRAP_S) { // TODO: implement TRAPs
+            //state.d = state.NEXT;
+          }
+                    
           if (instOpExec.q == Op.NOT_D || instOpExec.q == Op.NEG_D) {
             destReg = inst.q[1][3:1];
             destRegSize = inst.q[1][0];
@@ -299,6 +355,7 @@ module cpu (
             if (destRegSize) /* BYTE */ { reg.d[destReg][7:4] = reg.q[destReg][3:0]; reg.d[destReg][3:0] = reg.q[destReg][7:4]; }
             else             /* WORD */ { reg.d[destReg][15:8]= reg.q[destReg][7:0]; reg.d[destReg][7:0] = reg.q[destReg][15:8]; }
             // NOTE: does NOT set flags (unlike emulator; not sure we actually need to, and can't see a use case)
+            // TODO: EMULATOR DIFF
           }
           
           if (instOpExec.q == Op.SWAP_D_S || instOpExec.q == Op.MOV_D_S) {
@@ -385,7 +442,7 @@ module cpu (
             }
           }
           
-          if (instOpExec.q == Op.INC_D || instOpExec.q == Op.DEC_D || instOpExec.q == Op.LOOPS_ADR) {
+          if (instOpExec.q == Op.INC_D || instOpExec.q == Op.DEC_D || instOpExec.q == Op.LOOPS_ADR || instOpExec.q == Op.LOOP_ADDR) {
             destReg = inst.q[0][3:1];
             destRegSize = inst.q[0][0];
             alu.size_a = destRegSize;
@@ -395,12 +452,13 @@ module cpu (
             if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = alu.result[7:0];
             else             /* WORD */ reg.d[destReg] = alu.result;
             
-            if (instOpExec.q == Op.LOOPS_ADR) {
+            if (instOpExec.q == Op.LOOPS_ADR || instOpExec.q == Op.LOOP_ADDR) {
               if (!alu.carry) {
+                // TODO: Handle LOOP & LOOPS properly
                 // THIS IS NOT COMPLETE; NO HANDLING OF ADDRESSING MODES ATM
                 // jumps need to be sign extended when using eight bit short addresses
                 
-                reg.d[Reg.MP] = reg.q[Reg.MP] + c{inst.q[2][7] ? 8hFF : 8h00, inst.q[2]};
+                reg.d[Reg.MP] = reg.q[Reg.MP] + c{8x{inst.q[2][7]}, inst.q[2]};
               }
             }
           }
@@ -423,6 +481,26 @@ module cpu (
             io_out = reg.q[srceReg][7:0];
             io_write = 1;
             port = inst.q[2];
+          }
+          
+          if (instOpExec.q == Op.ENTER_IMMB) {
+            target_reg.d = Reg.BP;
+            target_reg_size.d = AluSize.WORD;
+            next_state.d = state.EXECUTE;
+            state.d = is_step_2.q ? state.NEXT : state.PUSH_LO;
+            is_step_2.d = ~is_step_2.q;
+            if (is_step_2.q) {
+              reg.d[Reg.BP] = reg.q[Reg.SP];
+              reg.d[Reg.SP] = reg.q[Reg.SP] - c{8b0, inst.q[1]};
+            }
+          }
+          
+          if (instOpExec.q == Op.EXIT_IMMB) {
+            reg.d[Reg.SP] = reg.q[Reg.SP] + c{8b0, inst.q[1]};
+            target_reg.d = Reg.BP;
+            target_reg_size.d = AluSize.WORD;
+            next_state.d = state.NEXT;
+            state.d = state.POP_HI;
           }
               
           if ((instOpExec.q == Op.BRK && dbe) || instOpExec.q == Op.HALT)
@@ -447,7 +525,7 @@ module cpu (
             calc_addr.i_x = addr_x;
             calc_addr.i_y = addr_y;
             calc_addr.i_orig_addr = addr_orig;
-            calc_addr.i_is_br_call = 0;
+            calc_addr.i_is_br_call = 1;
             
             calc_addr.i_en = 1;
             mapper.address = calc_addr.o_addr;
@@ -457,34 +535,107 @@ module cpu (
               if (br_u) {
                 case (br_flg) {
                   3b010: /* LT; N!=V / C */
-                    take_br = ( (!br_n && reg.q[Reg.IRQ_FLAGS][Flags.N] != reg.q[Reg.IRQ_FLAGS][Flags.V]) || 
-                                 (br_n && reg.q[Reg.IRQ_FLAGS][Flags.C]) );
+                    take_br = ( (!br_n && flg_n != flg_v) || 
+                                 (br_n && flg_c) );
                   3b011: /* LTE; N!=V|Z / C|Z */ 
-                    take_br = ( (!br_n && (reg.q[Reg.IRQ_FLAGS][Flags.N] != reg.q[Reg.IRQ_FLAGS][Flags.V] || reg.q[Reg.IRQ_FLAGS][Flags.Z])) || 
-                                 (br_n && (reg.q[Reg.IRQ_FLAGS][Flags.C] || reg.q[Reg.IRQ_FLAGS][Flags.Z])) );
+                    take_br = ( (!br_n && (flg_n != flg_v || flg_z)) || 
+                                 (br_n && (flg_c || flg_z)) );
                   3b100: /* GT; N=V & !Z / !C & !Z */
-                    take_br = ( (!br_n && (reg.q[Reg.IRQ_FLAGS][Flags.N] == reg.q[Reg.IRQ_FLAGS][Flags.V] && !reg.q[Reg.IRQ_FLAGS][Flags.Z])) || 
-                                 (br_n && (!reg.q[Reg.IRQ_FLAGS][Flags.C] && !reg.q[Reg.IRQ_FLAGS][Flags.Z])) );
+                    take_br = ( (!br_n && (flg_n == flg_v && !flg_z)) || 
+                                 (br_n && (!flg_c && !flg_z)) );
                   3b101: /* GTE; N=V | Z / !C | Z */
-                    take_br = ( (!br_n && (reg.q[Reg.IRQ_FLAGS][Flags.N] == reg.q[Reg.IRQ_FLAGS][Flags.V] || reg.q[Reg.IRQ_FLAGS][Flags.Z])) || 
-                                 (br_n && (!reg.q[Reg.IRQ_FLAGS][Flags.C] || reg.q[Reg.IRQ_FLAGS][Flags.Z])) );
+                    take_br = ( (!br_n && (flg_n == flg_v || flg_z)) || 
+                                 (br_n && (!flg_c || flg_z)) );
+                  /* TODO: remaining signed comparisons ABV, ABE, BLO, BLE*/
                   default: /* UNCONDITIONAL */
                     take_br = 1;
                 }
               } else {
-                flg_value = |reg.q[Reg.IRQ_FLAGS] & (8h1 << br_flg);
+                decode_flags.in = br_flg;
+                flg_value = |(reg.q[Reg.IRQ_FLAGS][7:0] & (decode_flags.out));
                 take_br = (!br_n && flg_value) || (br_n && !flg_value);
               }
               if (take_br) reg.d[Reg.MP] = calc_addr.o_addr[15:0];
-              state.d = state.NEXT; 
+              if (br_w) {                              // CALL! Push PC
+                next_state.d = state.NEXT;             // After we push PC, continue w/ execution
+                target_reg.d = Reg.PC;                 // PC is what we want to push
+                target_reg_size.d = AluSize.WORD;      // It's a word in length
+              } else                                   // BR -- don't push anything, go on w/ execution
+                state.d = state.NEXT; 
             }
+          }
+          
+          if ((instOpExec.q >= Op.PUSHALL && instOpExec.q <= Op.RET) ||
+              instOpExec.q == Op.PUSH_S  || instOpExec.q == Op.POP_D) {
+            is_target_var = instOpExec.q == Op.PUSH_S  || instOpExec.q == Op.POP_D;
+            is_push = is_target_var ? ~inst.q[0][4] : ~inst.q[0][0];
+            if (instOpExec.q == Op.RET) is_push = 0;
+            state.d = is_push ? state.PUSH_LO : state.POP_HI;
+            next_state.d = state.NEXT;
+
+            if (is_target_var) {
+              target_reg.d = c{1b0,inst.q[0][3:1]};
+              target_reg_size.d = inst.q[0][0];
+              next_state.d = state.NEXT;
+            } else {
+              target_reg_size.d = AluSize.WORD;
+              case (inst.q[0][2:0]) {
+                3b000: // pushall
+                  next_state.d = pushall_regs.q == pushall_regs.PUSH_BP ? state.EXECUTE : state.NEXT;
+                  pushall_regs.d = pushall_regs.q + 1;
+                  case (pushall_regs.q) {
+                    pushall_regs.PUSH_SP: target_reg.d = Reg.SP;
+                    pushall_regs.PUSH_A: target_reg.d = Reg.A;
+                    pushall_regs.PUSH_B: target_reg.d = Reg.B;
+                    pushall_regs.PUSH_C: target_reg.d = Reg.C;
+                    pushall_regs.PUSH_D: target_reg.d = Reg.D;
+                    pushall_regs.PUSH_X: target_reg.d = Reg.X;
+                    pushall_regs.PUSH_Y: target_reg.d = Reg.Y;
+                    pushall_regs.PUSH_BP: target_reg.d = Reg.BP; pushall_regs.d = pushall_regs.PUSH_SP;
+                  }
+                3b001: // popall
+                  next_state.d = popall_regs.q == popall_regs.POP_SP ? state.EXECUTE : state.NEXT;
+                  popall_regs.d = popall_regs.q + 1;
+                  case (popall_regs.q) {
+                    popall_regs.POP_SP: target_reg.d = Reg.SP; popall_regs.d = popall_regs.POP_BP;
+                    popall_regs.POP_A: target_reg.d = Reg.A;
+                    popall_regs.POP_B: target_reg.d = Reg.B;
+                    popall_regs.POP_C: target_reg.d = Reg.C;
+                    popall_regs.POP_D: target_reg.d = Reg.D;
+                    popall_regs.POP_X: target_reg.d = Reg.X;
+                    popall_regs.POP_Y: target_reg.d = Reg.Y;
+                    popall_regs.POP_BP: target_reg.d = Reg.BP; 
+                  }
+                3b010: /* pushf */ target_reg.d = Reg.IRQ_FLAGS; target_reg_size.d = AluSize.BYTE;
+                3b011: /* popf  */ target_reg.d = Reg.IRQ_FLAGS; target_reg_size.d = AluSize.BYTE;
+                3b100: /* pushmm*/ target_reg.d = Reg.MM;
+                3b101: /* popmm */ target_reg.d = Reg.MM;
+                3b110: /* ret */   target_reg.d = Reg.MP;
+              }
+            }
+          }
+          
+          if (instOpExec.q == Op.FPU) {
+          }
+          
+          if (instOpExec.q == Op.SET_F) {
+            decode_flags.in = inst.q[0][2:0];
+            reg.d[Reg.IRQ_FLAGS][7:0] = reg.q[Reg.IRQ_FLAGS] | decode_flags.out;           
+          }
+          
+          if (instOpExec.q == Op.CLR_F) {
+            decode_flags.in = inst.q[0][2:0];
+            reg.d[Reg.IRQ_FLAGS][7:0] = reg.q[Reg.IRQ_FLAGS] & ~decode_flags.out;           
+          }
+
+          if (instOpExec.q == Op.WAIT_IMMB) {
           }
           
           
         state.NEXT: 
           // TODO: handle IRQs
           state.d = state.FETCH_1;                  // when done, go back to fetch the next instruction
-          if (dbe & reg.q[Reg.IRQ_FLAGS][4]) {      // unless debugger is attached and single step enabled
+          if (dbe & flg_ss) {                       // unless debugger is attached and single step enabled
             state.d = state.HALT;                   // ... in which case, halt
           }
           cpu_clocks_hold.d = cpu_clocks.q;
@@ -499,6 +650,44 @@ module cpu (
             cpu_clocks.d = 0;
             inst_clocks.d = 0;
           }
+        state.PUSH_LO:                              // PUSH LO portion of target_reg on stack
+          tmp_reg = reg.q[Reg.SP] - 1;              // advance stack pointer a byte (negative direction; SP always goes DOWN when growing)
+          reg.d[Reg.SP] = tmp_reg;                  // update SP 
+          mapper.address = tmp_reg;
+          d_out = reg.q[target_reg.q][7:0];         // store LO to memory
+          d_write = 1b1;                            // request WRITE to memory; we'll be paused until it's written
+          state.d = target_reg_size.q ? /*BYTE*/ next_state.q : /*WORD*/ state.PUSH_HI;
+          
+        state.PUSH_HI:                              // PUSH HI portion of target_reg on to stack
+          tmp_reg = reg.q[Reg.SP] - 1;              // advance stack pointer a byte (negative direction; SP always goes DOWN when growing)
+          reg.d[Reg.SP] = tmp_reg;                  // update SP 
+          mapper.address = tmp_reg;
+          d_out = reg.q[target_reg.q][15:8];        // store HI to memory
+          d_write = 1b1;                            // request WRITE to memory; we'll be paused until it's written
+          state.d = next_state.q;
+          
+        state.POP_HI:
+          if (!target_reg_size.q) { /* WORD */
+            mapper.address = reg.q[Reg.SP];         // read from SP (it's pointing at the right place)
+            d_read = 1;
+            if (d_rdy) {
+              reg.d[target_reg.q][15:8] = d_in;     // copy HI bits
+              reg.d[Reg.SP] = reg.q[Reg.SP] + 1;    // advance SP by one for next read
+              state.d = state.POP_LO;               // go get next byte
+            }
+          } else {
+            state.d = state.POP_LO;
+          }
+        
+        state.POP_LO:
+          mapper.address = reg.q[Reg.SP];           // read from SP (it's pointing at the right place)
+          d_read = 1;
+          if (d_rdy) {
+            reg.d[target_reg.q][7:0] = d_in;       // copy LO bits
+            reg.d[Reg.SP] = reg.q[Reg.SP] + 1;      // advance SP by one for next read
+            state.d = next_state.q;                 // return
+          }
+
       }
     }
   }

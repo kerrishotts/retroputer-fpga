@@ -56,9 +56,10 @@ if (load) {
 		console.log("writing to memory");
 		let idx = 0;
 		let timer = setInterval(() => {
+			// TODO: write up to 64 bytes at once
 			const newAddr = addr + idx;
 			const byte = data[idx];
-			console.log(`0x${newAddr.toString(16)} = 0x${byte.toString(16)}`);
+			if (idx % 32 === 0) console.log(`0x${newAddr.toString(16)} = 0x${byte.toString(16)}`);
 			port.drain( () => port.write([0x80, newAddr & 0x00FF, (newAddr & 0xFF00) >> 8, (newAddr & 0x70000) >> 16, 0x00, byte, 0x00, 0x00, 0x00]));
 			idx++;
 			if (idx >= data.length) {
