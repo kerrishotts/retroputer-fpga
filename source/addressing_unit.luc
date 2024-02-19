@@ -92,7 +92,7 @@ module addressing_unit (
         o_d_read = 1b1;                             // request READ from memory
         if(i_d_rdy) {                               // when data is available
           addrIndirect.d[7:0] = i_d_in;             // load low bits of indirect address
-          ld_st_addr.d = ((addrIndirect.q[31:16] << 3) + addrIndirect.q[15:0]);
+          ld_st_addr.d = ((addrIndirect.q[31:16] << 3) + c{addrIndirect.q[15:8], i_d_in});
           addrState.d = i_y ? addrState.IDX_Y : (i_is_br_call ? addrState.FETCH_HI : addrState.DONE);
         }
       addrState.IDX_Y:
