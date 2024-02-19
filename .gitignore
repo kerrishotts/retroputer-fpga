@@ -1,4 +1,5 @@
 .DS_STORE
+node_modules
 *.log
 build_output.log
 work/constraint
