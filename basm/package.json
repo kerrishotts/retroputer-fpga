@@ -1,0 +1,30 @@
+{
+	"name": "basm",
+	"version": "1.0.0",
+	"license": "MIT",
+	"bin": "index.js",
+	"type": "module",
+	"engines": {
+		"node": ">=16"
+	},
+	"scripts": {
+		"build-basm": "pegjs --no-cache --format es -o basm.peg.js basm.pegjs",
+		"basm": "node index.js"
+	},
+	"dependencies": {
+		"pegjs": "^0.11.0-master.0b102d2",
+		"cli": "^1.0.1",
+		"cliffy": "^2.0.5",
+		"shelljs": "^0.8.4"
+	},
+	"devDependencies": {
+	},
+	"ava": {
+		"environmentVariables": {
+			"NODE_NO_WARNINGS": "1"
+		},
+		"nodeArguments": [
+			"--loader=import-jsx"
+		]
+	}
+}
