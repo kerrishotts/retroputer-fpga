@@ -24,12 +24,6 @@ global Flags {
   const Z = 3d0;  // zero 
 }
 
-global AddressModes {
-  const IMMEDIATE = 2b00; // immediate (data is in the instruction)
-  const ABSOLUTE = 2b01;  // absolute (data is at the address, potentially indirected & indexed
-  const RELATIVE_BP = 2b10; // relative BP addressing, potentially indirected & indexed
-  const ABSOLUTE_DX = 2b11; // absolute D,X addressing, potentially indirected & indexed
-}
 
 module cpu (
     input clk,  // clock
@@ -72,14 +66,16 @@ module cpu (
       dff inst[4][8];      // 32-bit instruction
       dff instOpExec[8];   // Final instruction to execute (after decodes & fixups)
       fsm state = { INIT, FETCH_1, FETCH_2, FETCH_3, FETCH_4, DECODE_1, DECODE_2, EXECUTE, NEXT, HALT };
-      fsm addrState = { START, IDX_X, INDIRECT_HI, INDIRECT_LO, IDX_Y, FETCH_WORD_HI, FETCH_WORD_LO, STORE_WORD_HI, STORE_WORD_LO };
-      dff addrIndirect[16];
+      fsm addrState = { CALC, FETCH_WORD_HI, FETCH_WORD_LO, STORE_WORD_HI, STORE_WORD_LO };
+      dff addrIndirect[32];
       dff ld_st_addr[19];
       //dff tmpData[16];
       dff cpu_clocks[16];
       dff inst_clocks[16]; 
       dff cpu_clocks_hold[16];
       dff inst_clocks_hold[16];
+      
+      addressing_unit calc_addr;
     }  
   }
     alu alu; 
@@ -109,6 +105,8 @@ module cpu (
   sig br_w;
   sig br_n;
   sig br_flg[3];
+  sig flg_value;
+  sig take_br;
   
   sig skip[1];
     
@@ -140,6 +138,21 @@ module cpu (
     if (dbg_reg_write) {
       reg.d[dbg_reg_sel] = dbg_reg_data;
     }
+    
+    calc_addr.i_en = 0;
+    calc_addr.i_d_in = d_in;
+    calc_addr.i_d_rdy = d_rdy;
+    calc_addr.i_reg_bp = reg.q[Reg.BP];
+    calc_addr.i_reg_pc = reg.q[Reg.PC];
+    calc_addr.i_reg_x = reg.q[Reg.X];
+    calc_addr.i_reg_y = reg.q[Reg.Y];
+    calc_addr.i_reg_d = reg.q[Reg.D];
+    calc_addr.i_orig_addr = 19bx;
+    calc_addr.i_mm = 2bx;
+    calc_addr.i_i = 1bx;
+    calc_addr.i_x = 1bx;
+    calc_addr.i_y = 1bx;
+    calc_addr.i_is_br_call = 1bx;
     
     instLUT.opcode = inst.q[0];      // wire up the first instruction byte to instLUT so we can calculate instruction size
     instSize = instLUT.out[9:8];     // size is the top two bytes of instLUT's return
@@ -314,51 +327,33 @@ module cpu (
           if (instOpExec.q == Op.LD_D_ADDR || instOpExec.q == Op.ST_S_ADDR) {
             state.d = state.EXECUTE; // keep us in this state (we'll move forward after we ld or st)
             store = instOpExec.q == Op.ST_S_ADDR; //inst.q[0][5]; // if not set, loading
+
             destReg = inst.q[0][3:1];
             destRegSize = inst.q[0][0];
+            
             addr_mm = inst.q[1][7:6];
             addr_i = inst.q[1][5];
             addr_x = inst.q[1][4];
             addr_y = inst.q[1][3];
             addr_orig = c{inst.q[1][2:0], inst.q[2], inst.q[3]};
-                        
+            
+            calc_addr.i_mm = addr_mm;
+            calc_addr.i_i = addr_i;
+            calc_addr.i_x = addr_x;
+            calc_addr.i_y = addr_y;
+            calc_addr.i_orig_addr = addr_orig;
+            calc_addr.i_is_br_call = 0;
+            
             case (addrState.q) {
-              addrState.START:
-                case (addr_mm) {
-                  AddressModes.RELATIVE_BP: ld_st_addr.d = c{addr_orig[18:16], addr_orig[15:0] + reg.q[Reg.BP]};
-                  AddressModes.ABSOLUTE_DX: ld_st_addr.d = addr_orig + c{reg.q[Reg.D], 3b0};
-                  default:                  ld_st_addr.d = addr_orig;
+              addrState.CALC:
+                calc_addr.i_en = 1;
+                mapper.address = calc_addr.o_addr;
+                d_read = calc_addr.o_d_read;
+                if (calc_addr.o_addr_valid) {
+                  ld_st_addr.d = calc_addr.o_addr;
+                  addrState.d = (store ? (destRegSize ? /*BYTE*/ addrState.STORE_WORD_LO : /*WORD*/ addrState.STORE_WORD_HI)
+                                       : (destRegSize ? /*BYTE*/ addrState.FETCH_WORD_LO : /*WORD*/ addrState.FETCH_WORD_HI));                  
                 }
-                addrState.d = addr_x ? addrState.IDX_X : (addr_i ? addrState.INDIRECT_HI : 
-                              (store ? (destRegSize ? /*BYTE*/ addrState.STORE_WORD_LO : /*WORD*/ addrState.STORE_WORD_HI)
-                                     : (destRegSize ? /*BYTE*/ addrState.FETCH_WORD_LO : /*WORD*/ addrState.FETCH_WORD_HI)));
-              addrState.IDX_X:
-                ld_st_addr.d = ld_st_addr.q + reg.q[Reg.X];
-                addrState.d = addr_i ? addrState.INDIRECT_HI : 
-                              (store ? (destRegSize ? /*BYTE*/ addrState.STORE_WORD_LO : /*WORD*/ addrState.STORE_WORD_HI)
-                                     : (destRegSize ? /*BYTE*/ addrState.FETCH_WORD_LO : /*WORD*/ addrState.FETCH_WORD_HI));
-              addrState.INDIRECT_HI:
-                mapper.address = ld_st_addr.q;            // assert mapped address on address output
-                d_read = 1b1;                             // request READ from memory
-                if(d_rdy) {                               // when data is available
-                  ld_st_addr.d = ld_st_addr.q + 1;          // advance memory ahead by one
-                  addrIndirect.d[15:8] = d_in;            // load high bits of indirect address
-                  state.d = addrState.INDIRECT_LO;        // next state
-                }
-              addrState.INDIRECT_LO:
-                mapper.address = ld_st_addr.q;            // assert next mapped address on address output
-                d_read = 1b1;                             // request READ from memory
-                if(d_rdy) {                               // when data is available
-                  addrIndirect.d[7:0] = d_in;             // load low bits of indirect address
-                  ld_st_addr.d = c{addrIndirect.q[15:8], d_in};
-                  addrState.d = addr_y ? addrState.IDX_Y :
-                                (store ? (destRegSize ? /*BYTE*/ addrState.STORE_WORD_LO : /*WORD*/ addrState.STORE_WORD_HI)
-                                       : (destRegSize ? /*BYTE*/ addrState.FETCH_WORD_LO : /*WORD*/ addrState.FETCH_WORD_HI));
-                }
-              addrState.IDX_Y:
-                ld_st_addr.d = ld_st_addr.q + reg.q[Reg.Y];
-                addrState.d = (store ? (destRegSize ? /*BYTE*/ addrState.STORE_WORD_LO : /*WORD*/ addrState.STORE_WORD_HI)
-                                     : (destRegSize ? /*BYTE*/ addrState.FETCH_WORD_LO : /*WORD*/ addrState.FETCH_WORD_HI));
               addrState.FETCH_WORD_HI:
                 mapper.address = ld_st_addr.q;
                 d_read = 1b1;                             // request READ from memory
@@ -372,7 +367,7 @@ module cpu (
                 d_read = 1b1;                             // request READ from memory
                 if(d_rdy) {                               // when data is available
                   reg.d[destReg][7:0] = d_in;             // load in destination LO
-                  addrState.d = addrState.START;
+                  addrState.d = addrState.CALC;
                   state.d = state.NEXT;                   // done; continue execution
                 }
               addrState.STORE_WORD_HI:
@@ -385,7 +380,7 @@ module cpu (
                 mapper.address = ld_st_addr.q;
                 d_out = reg.q[destReg][7:0];              // store LO portion to memory
                 d_write = 1b1;                            // request WRITE to memory; we'll be paused until it's written
-                addrState.d = addrState.START;
+                addrState.d = addrState.CALC;
                 state.d = state.NEXT;                     // done; continue execution
             }
           }
@@ -432,6 +427,59 @@ module cpu (
               
           if ((instOpExec.q == Op.BRK && dbe) || instOpExec.q == Op.HALT)
               state.d = state.HALT;
+            
+          if (instOpExec.q == Op.BRS_ADR || instOpExec.q == Op.BR_ADDR) {
+            state.d = state.EXECUTE; // keep us in this state (we'll move forward after we ld or st)
+
+            addr_mm = inst.q[1][7:6];
+            addr_i = inst.q[1][5];
+            addr_x = inst.q[1][4];
+            addr_y = inst.q[1][3];
+            addr_orig = inst.q[1][0] ? c{3b0, 8x{inst.q[2][7]}, inst.q[2]} : c{3b0, inst.q[2], inst.q[3]};
+            
+            br_n = inst.q[0][3];
+            br_flg = inst.q[0][2:0];
+            br_u = inst.q[1][2];
+            br_w = inst.q[1][1];
+            
+            calc_addr.i_mm = addr_mm;
+            calc_addr.i_i = addr_i;
+            calc_addr.i_x = addr_x;
+            calc_addr.i_y = addr_y;
+            calc_addr.i_orig_addr = addr_orig;
+            calc_addr.i_is_br_call = 0;
+            
+            calc_addr.i_en = 1;
+            mapper.address = calc_addr.o_addr;
+            d_read = calc_addr.o_d_read;
+            if (calc_addr.o_addr_valid) {
+              take_br = 0;
+              if (br_u) {
+                case (br_flg) {
+                  3b010: /* LT; N!=V / C */
+                    take_br = ( (!br_n && reg.q[Reg.IRQ_FLAGS][Flags.N] != reg.q[Reg.IRQ_FLAGS][Flags.V]) || 
+                                 (br_n && reg.q[Reg.IRQ_FLAGS][Flags.C]) );
+                  3b011: /* LTE; N!=V|Z / C|Z */ 
+                    take_br = ( (!br_n && (reg.q[Reg.IRQ_FLAGS][Flags.N] != reg.q[Reg.IRQ_FLAGS][Flags.V] || reg.q[Reg.IRQ_FLAGS][Flags.Z])) || 
+                                 (br_n && (reg.q[Reg.IRQ_FLAGS][Flags.C] || reg.q[Reg.IRQ_FLAGS][Flags.Z])) );
+                  3b100: /* GT; N=V & !Z / !C & !Z */
+                    take_br = ( (!br_n && (reg.q[Reg.IRQ_FLAGS][Flags.N] == reg.q[Reg.IRQ_FLAGS][Flags.V] && !reg.q[Reg.IRQ_FLAGS][Flags.Z])) || 
+                                 (br_n && (!reg.q[Reg.IRQ_FLAGS][Flags.C] && !reg.q[Reg.IRQ_FLAGS][Flags.Z])) );
+                  3b101: /* GTE; N=V | Z / !C | Z */
+                    take_br = ( (!br_n && (reg.q[Reg.IRQ_FLAGS][Flags.N] == reg.q[Reg.IRQ_FLAGS][Flags.V] || reg.q[Reg.IRQ_FLAGS][Flags.Z])) || 
+                                 (br_n && (!reg.q[Reg.IRQ_FLAGS][Flags.C] || reg.q[Reg.IRQ_FLAGS][Flags.Z])) );
+                  default: /* UNCONDITIONAL */
+                    take_br = 1;
+                }
+              } else {
+                flg_value = |reg.q[Reg.IRQ_FLAGS] & (8h1 << br_flg);
+                take_br = (!br_n && flg_value) || (br_n && !flg_value);
+              }
+              if (take_br) reg.d[Reg.MP] = calc_addr.o_addr[15:0];
+              state.d = state.NEXT; 
+            }
+          }
+          
           
         state.NEXT: 
           // TODO: handle IRQs

@@ -18,6 +18,7 @@
     <src>cpu.luc</src>
     <component>decoder.luc</component>
     <src>memory_mapper.luc</src>
+    <src>addressing_unit.luc</src>
     <component>pn_gen.luc</component>
     <component>uart_tx.luc</component>
     <component>mig_wrapper.luc</component>
