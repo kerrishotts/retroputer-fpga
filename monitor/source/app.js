@@ -93,7 +93,7 @@ export default function App() {
 				case "reg": bank = 0xC0; break;
 			}
 			addr += sel;
-			port.drain(() => port.write([0x80, addr & 0x00FF, (addr & 0xFF00) >> 8, (addr & 0x70000) >> 16, bank, num & 0xFF, (num & 0xFF00) >> 8, 0x00, 0x00]))
+			/*(port.drain(() =>*/ port.write([0x80, addr & 0x00FF, (addr & 0xFF00) >> 8, (addr & 0x70000) >> 16, bank, num & 0xFF, (num & 0xFF00) >> 8, 0x00, 0x00])//)
 			setHexIn("");
 		}
 		if (input === 'q') {
@@ -111,17 +111,17 @@ export default function App() {
 				if (port.isOpen) {
 					let length, width;
 					if (which === "io") {
-						port.isOpen && port.drain(() => port.write([0x4f,ioBase & 0x00FF, 0x00 ,0x00,0x80]));
+						port.isOpen && /*port.drain(() =>*/ port.write([0x4f,ioBase & 0x00FF, 0x00 ,0x00,0x80])//);
 						width = 8;
 						length = 16;
 					}
 					if (which === "reg") {
-						port.isOpen && port.drain(() => port.write([0x4f,0x00,0x00,0x00,0xC0]));
+						port.isOpen && /*port.drain(() =>*/ port.write([0x4f,0x00,0x00,0x00,0xC0])//);
 						width = 16;
 						length = 16;
 					}
 					if (which === "mem") {
-						port.isOpen && port.drain(() => port.write([0x4f,memBase & 0x00FF,(memBase & 0xFF00) >> 8, (memBase & 0x70000) >> 16,0x00]));
+						port.isOpen && /*port.drain(() =>*/ port.write([0x4f,memBase & 0x00FF,(memBase & 0xFF00) >> 8, (memBase & 0x70000) >> 16,0x00])//);
 						width = 8;
 						length = 16;
 					}

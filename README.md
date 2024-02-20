@@ -30,10 +30,11 @@ Note: It's SUPER EARLY DAYS... nothing here is terribly useful. I'm also just le
   - [X] In doing this, it seems like devices are asserting their data all the time, even when we should only be asserting when our device is asserted. UPDATE: no -- we should have indicated 0 states for all bytes (since we OR at the end).
 - [X] Serial/Io Board compete for memory and I/O -- this causes the CPU to crash. Need to Implement better arbitration (we'll need it anyway later) -- FIXED! (we still have bus artibration problems, but CPU no longer crashes)
 - [X] Build out ld, st instructions so we can start working w/ memory
+- [ ] Update monitor to upload a .bin file into memory at a given location (instead of manually typing it in!)
 
 ## To do next
+- [ ] First bit in first byte of each 16-byte rows is always low, so we can't safely store odd values there. Why? Ruled out serial port; the CPU sees this even when it writes it. Cache can _sometimes_ hold it for a sec... DDR3 problem? Surely not?
 - [ ] Add flag to invalidate LRU cache so serial register interface can always see latest data in memory
-- [ ] Update monitor to upload a .bin file into memory at a given location (instead of manually typing it in!)
 - [ ] Add dummy devices so we can safely use IN on ports we don't have anything attached on
 - [ ] Add console input & output now that we have the console on device 8; this means figuring out panes so that we can switch between the console, memory, I/O, and CPU registers.
 - [ ] Simulate keyboard from input from serial until we have a physical keyboard

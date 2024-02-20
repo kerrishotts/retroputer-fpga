@@ -560,6 +560,7 @@ module cpu (
                 next_state.d = state.NEXT;             // After we push PC, continue w/ execution
                 target_reg.d = Reg.PC;                 // PC is what we want to push
                 target_reg_size.d = AluSize.WORD;      // It's a word in length
+                state.d = state.PUSH_LO;               // and actually push PC
               } else                                   // BR -- don't push anything, go on w/ execution
                 state.d = state.NEXT; 
             }
@@ -569,7 +570,7 @@ module cpu (
               instOpExec.q == Op.PUSH_S  || instOpExec.q == Op.POP_D) {
             is_target_var = instOpExec.q == Op.PUSH_S  || instOpExec.q == Op.POP_D;
             is_push = is_target_var ? ~inst.q[0][4] : ~inst.q[0][0];
-            if (instOpExec.q == Op.RET) is_push = 0;
+            //if (instOpExec.q == Op.RET) is_push = 0;
             state.d = is_push ? state.PUSH_LO : state.POP_HI;
             next_state.d = state.NEXT;
 
@@ -610,7 +611,7 @@ module cpu (
                 3b011: /* popf  */ target_reg.d = Reg.IRQ_FLAGS; target_reg_size.d = AluSize.BYTE;
                 3b100: /* pushmm*/ target_reg.d = Reg.MM;
                 3b101: /* popmm */ target_reg.d = Reg.MM;
-                3b110: /* ret */   target_reg.d = Reg.MP;
+                3b111: /* ret */   target_reg.d = Reg.MP;
               }
             }
           }

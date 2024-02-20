@@ -33,12 +33,14 @@ module device_serial #(
     dff waiting_for_mem;
     dff waiting_for_mem_write;
     dff waiting_for_mem_read;
+    dff waiting_for_cache_flush;
     lru_cache cache(#ENTRIES(1), #WORD_SIZE(8), #AGE_BITS(1));
     fifo fifo_console_in(#SIZE(8), #DEPTH(256));
     fifo fifo_console_out(#SIZE(8), #DEPTH(256));
+    fifo fifo_mem_in(#SIZE(27), #DEPTH(256));
     #CLK_FREQ(81250000) {
     reg_interface reg_interface;
-      #BAUD(1000000) {        // The baud rate of the uarts
+      #BAUD(812500/*1000000*/) {        // The baud rate of the uarts
         uart_rx uart_rx;      // The uart required by the register interace
         uart_tx uart_tx;      // The uart required by the register interace
       }
@@ -119,6 +121,10 @@ module device_serial #(
     fifo_console_out.rget = 0;
     fifo_console_out.wput = 0;
     
+    fifo_mem_in.din = 8bx;
+    fifo_mem_in.rget = 0;
+    fifo_mem_in.wput = 0;
+    
     /* handle the device side of things */
     device_sel = device_in.addr[7:4];
     device_port = device_in.addr[3:0];
@@ -178,6 +184,8 @@ module device_serial #(
           RAM_BANK: // write to RAM
             waiting_for_mem.d = 1;
             waiting_for_mem_write.d = 1;
+            fifo_mem_in.wput = 1;
+            fifo_mem_in.din = c{reg_interface.regOut.address[18:0], reg_interface.regOut.data[7:0]};
           DEVICE_BANK:
             case (reg_interface.regOut.address[2:0]) {
               SINGLE_STEP: nmi = 1;
@@ -238,13 +246,22 @@ module device_serial #(
     if (waiting_for_mem.q) {
       if (waiting_for_mem_write.q) {
         if (cache.wr_ready) {
-          cache.wr_addr = reg_interface.regOut.address[18:0];
-          cache.wr_data = reg_interface.regOut.data[7:0];
+          cache.wr_addr = fifo_mem_in.dout[26:8];
+          cache.wr_data = fifo_mem_in.dout[7:0];
+          fifo_mem_in.rget = 1;
           cache.wr_valid = 1;
+          waiting_for_mem.d = 1;
+          if (fifo_mem_in.empty) {
+            waiting_for_mem_write.d = 0;
+            waiting_for_cache_flush.d = 1;
+          }
+        }
+      }
+      if (waiting_for_cache_flush.q) {
+        if (cache.flush_ready) {
           waiting_for_mem.d = 0;
-          waiting_for_mem_write.d = 0;
-          
-          if (cache.flush_ready) cache.flush = 1;
+          waiting_for_cache_flush.d = 0;
+          cache.flush = 1;
         }
       }
       if (waiting_for_mem_read.q) {

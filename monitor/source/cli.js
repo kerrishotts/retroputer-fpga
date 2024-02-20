@@ -29,7 +29,7 @@ const cli = meow(
 );
 
 const path = cli.flags.path || "/dev/tty.usbserial-FT4ZS6I31"; 
-const baudRate = cli.flags.baud ? Number(cli.flags.baud) : 1000000;
+const baudRate = cli.flags.baud ? Number(cli.flags.baud) : 812500; //1000000;
 const port = new SerialPort({ path, baudRate, autoOpen: false });
 const load = cli.flags.load;
 const fmt = cli.flags.fmt || "bin";
@@ -55,20 +55,27 @@ if (load) {
 		}
 		console.log("writing to memory");
 		let idx = 0;
+		const bytesToSendAtOnce = 8;
 		let timer = setInterval(() => {
 			// TODO: write up to 64 bytes at once
 			const newAddr = addr + idx;
-			const byte = data[idx];
-			if (idx % 32 === 0) console.log(`0x${newAddr.toString(16)} = 0x${byte.toString(16)}`);
-			port.drain( () => port.write([0x80, newAddr & 0x00FF, (newAddr & 0xFF00) >> 8, (newAddr & 0x70000) >> 16, 0x00, byte, 0x00, 0x00, 0x00]));
-			idx++;
+			const bytes = data.slice(idx, idx + bytesToSendAtOnce);
+			if (idx % 256 === 0) process.stdout.write(".");
+			const expandedBytes = bytes.reduce((acc, cur) => {acc.push(cur, 0, 0, 0); return acc}, []);
+			port.write([0xC0 + (bytes.length - 1),                                                  /*command (write, auto inc, length) */
+				        newAddr & 0x00FF, (newAddr & 0xFF00) >> 8, (newAddr & 0x70000) >> 16, 0x00, /* starting address */
+				        ...expandedBytes                                                            /* data */]);
+			idx += bytesToSendAtOnce; 
 			if (idx >= data.length) {
 				clearInterval(timer);
 				console.log("complete");
-				if (port.isOpen) port.drain( () => {
-					port.off("on", handler);
-					if (port.isOpen) port.close();
-				})
+				if (port.isOpen) {
+					console.log("(draining)");
+					port.drain( () => {
+						port.off("on", handler);
+						if (port.isOpen) port.close();
+					});
+				}
 			}
 		}, 0)
 	}
