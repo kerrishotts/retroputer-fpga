@@ -107,6 +107,7 @@ module cpu (
   sig addr_x;
   sig addr_y;
   sig addr_orig[19];
+  sig inc_ld_st_addr[19];
   sig store;
   
   sig br_u;
@@ -124,6 +125,17 @@ module cpu (
   sig flg_n;
   sig flg_v;
   sig flg_z;
+  
+  sig reg_pc[16];
+  sig reg_mp[16];
+  sig inc_reg_mp[16];
+  sig reg_sp[16];
+  sig dec_reg_sp[16];
+  sig inc_reg_sp[16];
+  sig reg_bp[16];
+  sig reg_x[16];
+  sig reg_y[16];
+  sig reg_d[16];
   
   sig skip[1];
   sig is_immediate;
@@ -163,14 +175,27 @@ module cpu (
       reg.d[dbg_reg_sel] = dbg_reg_data;
     }
     
+    reg_pc = reg.q[Reg.PC];
+    reg_mp = reg.q[Reg.MP];
+    inc_reg_mp = reg_mp + 1;
+    reg_bp = reg.q[Reg.BP];
+    reg_sp = reg.q[Reg.SP];
+    dec_reg_sp = reg_sp - 1;
+    inc_reg_sp = reg_sp + 1;
+    reg_d = reg.q[Reg.D];
+    reg_x = reg.q[Reg.X];
+    reg_y = reg.q[Reg.Y];
+    
+    inc_ld_st_addr = ld_st_addr.q + 1;
+    
     calc_addr.i_en = 0;
     calc_addr.i_d_in = d_in;
     calc_addr.i_d_rdy = d_rdy;
-    calc_addr.i_reg_bp = reg.q[Reg.BP];
-    calc_addr.i_reg_pc = reg.q[Reg.PC];
-    calc_addr.i_reg_x = reg.q[Reg.X];
-    calc_addr.i_reg_y = reg.q[Reg.Y];
-    calc_addr.i_reg_d = reg.q[Reg.D];
+    calc_addr.i_reg_bp = reg_bp;
+    calc_addr.i_reg_pc = reg_pc;
+    calc_addr.i_reg_x = reg_x;
+    calc_addr.i_reg_y = reg_y;
+    calc_addr.i_reg_d = reg_d;
     calc_addr.i_orig_addr = 19bx;
     calc_addr.i_mm = 2bx;
     calc_addr.i_i = 1bx;
@@ -209,10 +234,10 @@ module cpu (
           state.d = state.NEXT;     // start fetching instructions (but NEXT will let us halt immediately if need be)
   
         state.FETCH_1:
-          mapper.address = c{3b000, reg.q[Reg.MP]}; // assert mapped address on address output
+          mapper.address = c{3b000, reg_mp};        // assert mapped address on address output
           d_read = 1b1;                             // request READ from memory
           if(d_rdy) {                               // when data is available
-            reg.d[Reg.MP] = reg.q[Reg.MP] + 1;      // ... increment MP by one (ready for next byte, if needed)
+            reg.d[Reg.MP] = inc_reg_mp;             // ... increment MP by one (ready for next byte, if needed)
             inst.d[0] = d_in;                       // ... set the instruction's first byte to the data
             inst.d[1] = 0;                          // ... clear the rest
             inst.d[2] = 0;
@@ -222,31 +247,31 @@ module cpu (
           }
           
         state.FETCH_2:
-          mapper.address = c{3b000, reg.q[Reg.MP]}; // assert mapped address on address output
+          mapper.address = c{3b000, reg_mp};        // assert mapped address on address output
           d_read = 1b1;                             // request READ from memory
           if(d_rdy) {                               // when data is availabe
-            reg.d[Reg.MP] = reg.q[Reg.MP] + 1;      // ... increment MP by one (ready for next byte, if needed)
+            reg.d[Reg.MP] = inc_reg_mp;             // ... increment MP by one (ready for next byte, if needed)
             inst.d[1] = d_in;                       // ... populate second byte of instruction
             state.d = instSize != InstWidth.TWO ? state.FETCH_3 : state.DECODE_1;
           }
         state.FETCH_3:
-          mapper.address = c{3b000, reg.q[Reg.MP]}; // read another byte from mapped memory
+          mapper.address = c{3b000, reg_mp};        // read another byte from mapped memory
           d_read = 1b1;                             // request READ from memory
           if(d_rdy) {                               // when data is available
-            reg.d[Reg.MP] = reg.q[Reg.MP] + 1;      // ... increment MP by one (ready for next byte, if needed)
+            reg.d[Reg.MP] = inc_reg_mp;             // ... increment MP by one (ready for next byte, if needed)
             inst.d[2] = d_in;                       // ... populate third byte of instruction
             state.d = instSize != InstWidth.THREE ? state.FETCH_4 : state.DECODE_1;
           }
         state.FETCH_4:
-          mapper.address = c{3b000, reg.q[Reg.MP]}; // read another byte from mapped memory
+          mapper.address = c{3b000, reg_mp};        // read another byte from mapped memory
           d_read = 1b1;                             // request READ from memory
           if(d_rdy) {
-            reg.d[Reg.MP] = reg.q[Reg.MP] + 1;      // ... increment MP by one (ready for next byte, if needed)
+            reg.d[Reg.MP] = inc_reg_mp;             // ... increment MP by one (ready for next byte, if needed)
             inst.d[3] = d_in;                       // store final instruction byte
             state.d = state.DECODE_1;                 // no instruction is longer than four bytes; go to decoding
           }
         state.DECODE_1:
-          reg.d[Reg.PC] = reg.q[Reg.MP];            // Move PC to match MP
+          reg.d[Reg.PC] = reg_mp;            // Move PC to match MP
           instOpExec.d = instOp;
           fixup = 1b0;                              // signal if we need a fixup -- 0 means no
           // fix ups -- need to account for having read too much of the instruction
@@ -254,8 +279,9 @@ module cpu (
                   ((instOp == Op.LOOP_FIXUP || instOp == Op.BR_FIXUP) && inst.q[1][0]);
           if (fixup) {
             // move MP and PC back by one
-            reg.d[Reg.MP] = reg.q[Reg.MP] - 1;
-            reg.d[Reg.PC] = reg.q[Reg.MP] - 1;
+            tmp_reg = reg_mp - 1;
+            reg.d[Reg.MP] = tmp_reg;
+            reg.d[Reg.PC] = tmp_reg;
           }
 
           case (instOp) {
@@ -300,26 +326,31 @@ module cpu (
             alu.b = srceRegSize ? /* BYTE */ c{8b0, reg.q[srceReg][7:0]} : reg.q[srceReg];
             if (is_immediate) alu.b = srceRegSize ? /* BYTE */ inst.q[2] : c{inst.q[2], inst.q[3]};
             if (is_nybble) alu.b = c{12b0, inst.q[1][3:0]};
-            alu.carry_in = reg.q[Reg.IRQ_FLAGS][2];
+            alu.carry_in = flg_c; //reg.q[Reg.IRQ_FLAGS][2];
             skip = 0; // if skip isn't set, we'll store the result of aluOp back in dest
+            alu.size_r = destRegSize;
             
+            alu.op = AluOps.NOP;
             case (is_immediate ? instOpExec.q[5:3] : instOpExec.q[2:0]) {
-              Op.ADD_D_S: alu.op = AluOps.ADD;
-              Op.SUB_D_S: alu.op = AluOps.SUB;
-              Op.CMP_D_S: alu.op = AluOps.SUB; skip = 1; // cmp is subtract, but don't store result
-              Op.AND_D_S: alu.op = AluOps.AND;
-              Op.OR_D_S:  alu.op = AluOps.OR;
-              Op.TEST_D_S: alu.op = AluOps.AND; skip = 1; // test is AND, but don't store result
-              Op.XOR_D_S: alu.op = AluOps.XOR;
-              Op.SHL_D_S: alu.op = AluOps.SHL;
-              Op.SHR_D_S: alu.op = AluOps.SHR;
-              Op.MUL_D_S: alu.op = AluOps.MUL;
-              Op.MOD_D_S: alu.op = AluOps.MOD;
-              Op.DIV_D_S: alu.op = AluOps.DIV;
-              Op.SMUL_D_S: alu.op = AluOps.SMUL;
-              Op.SMOD_D_S: alu.op = AluOps.SMOD;
-              Op.SDIV_D_S: alu.op = AluOps.SDIV;
-              default: alu.op = AluOps.ADD;
+              3b001: alu.op = AluOps.ADD;
+              3b010: alu.op = AluOps.SUB;
+              3b011: alu.op = AluOps.SUB; skip = 1; // cmp is subtract, but don't store result
+              3b100: alu.op = AluOps.AND;
+              3b101: alu.op = AluOps.OR;
+              3b110: alu.op = AluOps.AND; skip = 1; // test is AND, but don't store result
+              3b111: alu.op = AluOps.XOR;
+            }
+            if (!is_immediate) {
+              case(instOpExec.q) {
+                Op.SHL_D_S: alu.op = AluOps.SHL;
+                Op.SHR_D_S: alu.op = AluOps.SHR;
+                Op.MUL_D_S: alu.op = AluOps.MUL;
+                Op.MOD_D_S: alu.op = AluOps.MOD;
+                Op.DIV_D_S: alu.op = AluOps.DIV;
+                Op.SMUL_D_S: alu.op = AluOps.SMUL;
+                Op.SMOD_D_S: alu.op = AluOps.SMOD;
+                Op.SDIV_D_S: alu.op = AluOps.SDIV;
+              }
             }
             if (is_nybble) {
               alu.op = AluOps.SHL;
@@ -415,7 +446,7 @@ module cpu (
                 mapper.address = ld_st_addr.q;
                 d_read = 1b1;                             // request READ from memory
                 if(d_rdy) {                               // when data is available
-                  ld_st_addr.d = ld_st_addr.q + 1;          // advance mem by one
+                  ld_st_addr.d = inc_ld_st_addr;          // advance mem by one
                   reg.d[destReg][15:8] = d_in;            // load in destination HI
                   addrState.d = addrState.FETCH_WORD_LO;
                 }
@@ -429,7 +460,7 @@ module cpu (
                 }
               addrState.STORE_WORD_HI:
                 mapper.address = ld_st_addr.q;
-                ld_st_addr.d = ld_st_addr.q + 1;          // advance mem by one
+                ld_st_addr.d = inc_ld_st_addr;          // advance mem by one
                 d_out = reg.q[destReg][15:8];             // store HI portion to memory
                 d_write = 1b1;                            // request WRITE to memory; we'll be paused until it's written
                 addrState.d = addrState.STORE_WORD_LO;
@@ -458,7 +489,7 @@ module cpu (
                 // THIS IS NOT COMPLETE; NO HANDLING OF ADDRESSING MODES ATM
                 // jumps need to be sign extended when using eight bit short addresses
                 
-                reg.d[Reg.MP] = reg.q[Reg.MP] + c{8x{inst.q[2][7]}, inst.q[2]};
+                reg.d[Reg.MP] = reg_mp + c{8x{inst.q[2][7]}, inst.q[2]};
               }
             }
           }
@@ -490,8 +521,8 @@ module cpu (
             state.d = is_step_2.q ? state.NEXT : state.PUSH_LO;
             is_step_2.d = ~is_step_2.q;
             if (is_step_2.q) {
-              reg.d[Reg.BP] = reg.q[Reg.SP];
-              reg.d[Reg.SP] = reg.q[Reg.SP] - c{8b0, inst.q[1]};
+              reg.d[Reg.BP] = reg_sp;
+              reg.d[Reg.SP] = reg_sp - c{8b0, inst.q[1]};
             }
           }
           
@@ -652,28 +683,28 @@ module cpu (
             inst_clocks.d = 0;
           }
         state.PUSH_LO:                              // PUSH LO portion of target_reg on stack
-          tmp_reg = reg.q[Reg.SP] - 1;              // advance stack pointer a byte (negative direction; SP always goes DOWN when growing)
+          tmp_reg = dec_reg_sp;              // advance stack pointer a byte (negative direction; SP always goes DOWN when growing)
           reg.d[Reg.SP] = tmp_reg;                  // update SP 
-          mapper.address = tmp_reg;
+          mapper.address = c{3b0, tmp_reg};
           d_out = reg.q[target_reg.q][7:0];         // store LO to memory
           d_write = 1b1;                            // request WRITE to memory; we'll be paused until it's written
           state.d = target_reg_size.q ? /*BYTE*/ next_state.q : /*WORD*/ state.PUSH_HI;
           
         state.PUSH_HI:                              // PUSH HI portion of target_reg on to stack
-          tmp_reg = reg.q[Reg.SP] - 1;              // advance stack pointer a byte (negative direction; SP always goes DOWN when growing)
+          tmp_reg = dec_reg_sp;              // advance stack pointer a byte (negative direction; SP always goes DOWN when growing)
           reg.d[Reg.SP] = tmp_reg;                  // update SP 
-          mapper.address = tmp_reg;
+          mapper.address = c{3b0, tmp_reg};
           d_out = reg.q[target_reg.q][15:8];        // store HI to memory
           d_write = 1b1;                            // request WRITE to memory; we'll be paused until it's written
           state.d = next_state.q;
           
         state.POP_HI:
           if (!target_reg_size.q) { /* WORD */
-            mapper.address = reg.q[Reg.SP];         // read from SP (it's pointing at the right place)
+            mapper.address = c{3b0,reg.q[Reg.SP]};         // read from SP (it's pointing at the right place)
             d_read = 1;
             if (d_rdy) {
               reg.d[target_reg.q][15:8] = d_in;     // copy HI bits
-              reg.d[Reg.SP] = reg.q[Reg.SP] + 1;    // advance SP by one for next read
+              reg.d[Reg.SP] = inc_reg_sp;    // advance SP by one for next read
               state.d = state.POP_LO;               // go get next byte
             }
           } else {
@@ -681,11 +712,11 @@ module cpu (
           }
         
         state.POP_LO:
-          mapper.address = reg.q[Reg.SP];           // read from SP (it's pointing at the right place)
+          mapper.address = c{3b0,reg.q[Reg.SP]};           // read from SP (it's pointing at the right place)
           d_read = 1;
           if (d_rdy) {
             reg.d[target_reg.q][7:0] = d_in;       // copy LO bits
-            reg.d[Reg.SP] = reg.q[Reg.SP] + 1;      // advance SP by one for next read
+            reg.d[Reg.SP] = inc_reg_sp;      // advance SP by one for next read
             state.d = next_state.q;                 // return
           }
 

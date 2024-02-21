@@ -29,7 +29,7 @@ const cli = meow(
 );
 
 const path = cli.flags.path || "/dev/tty.usbserial-FT4ZS6I31"; 
-const baudRate = cli.flags.baud ? Number(cli.flags.baud) : 812500; //1000000;
+const baudRate = cli.flags.baud ? Number(cli.flags.baud) : 1000000;
 const port = new SerialPort({ path, baudRate, autoOpen: false });
 const load = cli.flags.load;
 const fmt = cli.flags.fmt || "bin";

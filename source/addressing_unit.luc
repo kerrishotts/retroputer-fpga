@@ -34,15 +34,21 @@ module addressing_unit (
   
   .clk(clk), .rst(rst) {
     fsm addrState = { IDLE, IDX_X, INDIRECT_BNK_HI, INDIRECT_BNK_LO, INDIRECT_ADR_HI, INDIRECT_ADR_LO, IDX_Y, FETCH_HI, FETCH_LO, DONE };
-    dff addrIndirect[32];
+    dff addrIndirect[24];    // bottom 8 bytes will be immediately used (don't need a temp)
     dff addr_temp_hi[8];
     dff ld_st_addr[19];
   }
+  
+  sig orig_addr_16[16];
+  sig inc_ld_st_addr[19];
   
   always {
     o_addr_valid = 0; // hold this low until we've calculated a valid address 
     o_d_read = 0;     // don't read memory 
     o_addr = 19bx;    // don't care about address
+    
+    orig_addr_16 = i_orig_addr[15:0];
+    inc_ld_st_addr = ld_st_addr.q + 19b1;
 
     case (addrState.q) {
       addrState.IDLE:
@@ -50,54 +56,68 @@ module addressing_unit (
           case (i_mm) {
             AddressModes.IMMEDIATE:
               ld_st_addr.d = i_orig_addr;
-              if (i_is_br_call) ld_st_addr.d = c{3b0, i_orig_addr[15:0] +  i_reg_pc};
-            AddressModes.RELATIVE_BP: ld_st_addr.d = c{i_orig_addr[18:16], i_orig_addr[15:0] + i_reg_bp};
+              if (i_is_br_call) ld_st_addr.d = c{3b0, orig_addr_16 +  i_reg_pc};
+            AddressModes.RELATIVE_BP: ld_st_addr.d = c{3b0 /*i_orig_addr[18:16]*/, orig_addr_16 + i_reg_bp};
             AddressModes.ABSOLUTE_DX: ld_st_addr.d = i_orig_addr + c{i_reg_d, 3b0};
             default:
               ld_st_addr.d = i_orig_addr;
           }
-          addrState.d = i_x ? addrState.IDX_X : (i_i ? addrState.INDIRECT_BNK_HI : (i_y ? addrState.IDX_Y : (i_is_br_call ? addrState.FETCH_HI : addrState.DONE)));
+//          addrState.d = i_x ? addrState.IDX_X : (i_i ? addrState.INDIRECT_BNK_HI : (i_y ? addrState.IDX_Y : (i_is_br_call ? addrState.FETCH_HI : addrState.DONE)));
+          addrState.d = addrState.DONE;
+          if (i_is_br_call) addrState.d = addrState.FETCH_HI;
+          if (i_y) addrState.d = addrState.IDX_Y;
+          if (i_i) addrState.d = addrState.INDIRECT_BNK_HI;
+          if (i_x) addrState.d = addrState.IDX_X;
         }
   
       addrState.IDX_X:
         ld_st_addr.d = ld_st_addr.q + c{3b0, i_reg_x};
-        addrState.d = i_i ? addrState.INDIRECT_BNK_HI : (i_y ? addrState.IDX_Y : (i_is_br_call ? addrState.FETCH_HI : addrState.DONE));
+        //addrState.d = i_i ? addrState.INDIRECT_BNK_HI : (i_y ? addrState.IDX_Y : (i_is_br_call ? addrState.FETCH_HI : addrState.DONE));
+        addrState.d = addrState.DONE;
+        if (i_is_br_call) addrState.d = addrState.FETCH_HI;
+        if (i_y) addrState.d = addrState.IDX_Y;
+        if (i_i) addrState.d = addrState.INDIRECT_BNK_HI;
 
       addrState.INDIRECT_BNK_HI:
         o_addr = ld_st_addr.q;                      // assert mapped address on address output
         o_d_read = 1b1;                             // request READ from memory
         if(i_d_rdy) {                               // when data is available
-          ld_st_addr.d = ld_st_addr.q + 1;          // advance memory ahead by one
-          addrIndirect.d[31:24] = i_d_in;           // load high bits of indirect bank address
+          ld_st_addr.d = inc_ld_st_addr; // ld_st_addr.q + 1;          // advance memory ahead by one
+          addrIndirect.d[23:16] = i_d_in;           // load high bits of indirect bank address
           addrState.d = addrState.INDIRECT_BNK_LO;  // next state
         }
       addrState.INDIRECT_BNK_LO:
         o_addr = ld_st_addr.q;                      // assert mapped address on address output
         o_d_read = 1b1;                             // request READ from memory
         if(i_d_rdy) {                               // when data is available
-          ld_st_addr.d = ld_st_addr.q + 1;          // advance memory ahead by one
-          addrIndirect.d[23:16] = i_d_in;           // load low bits of indirect bank address
+          ld_st_addr.d = inc_ld_st_addr; //ld_st_addr.q + 1;          // advance memory ahead by one
+          addrIndirect.d[15:8] = i_d_in;           // load low bits of indirect bank address
           addrState.d = addrState.INDIRECT_ADR_HI;  // next state
         }
       addrState.INDIRECT_ADR_HI:
         o_addr = ld_st_addr.q;                      // assert mapped address on address output
         o_d_read = 1b1;                             // request READ from memory
         if(i_d_rdy) {                               // when data is available
-          ld_st_addr.d = ld_st_addr.q + 1;          // advance memory ahead by one
-          addrIndirect.d[15:8] = i_d_in;            // load high bits of indirect offset address
+          ld_st_addr.d = inc_ld_st_addr; // ld_st_addr.q + 1;          // advance memory ahead by one
+          addrIndirect.d[7:0] = i_d_in;            // load high bits of indirect offset address
           addrState.d = addrState.INDIRECT_ADR_LO;  // next state
         }
       addrState.INDIRECT_ADR_LO:
         o_addr = ld_st_addr.q;            // assert next mapped address on address output
         o_d_read = 1b1;                             // request READ from memory
         if(i_d_rdy) {                               // when data is available
-          addrIndirect.d[7:0] = i_d_in;             // load low bits of indirect address
-          ld_st_addr.d = ((addrIndirect.q[31:16] << 3) + c{addrIndirect.q[15:8], i_d_in});
-          addrState.d = i_y ? addrState.IDX_Y : (i_is_br_call ? addrState.FETCH_HI : addrState.DONE);
+          //ld_st_addr.d = ((addrIndirect.q[31:16] << 3) + c{addrIndirect.q[15:8], i_d_in});
+          ld_st_addr.d = c{addrIndirect.q[23:8], 3b0} + c{3b0, addrIndirect.q[7:0], i_d_in};
+          //addrState.d = i_y ? addrState.IDX_Y : (i_is_br_call ? addrState.FETCH_HI : addrState.DONE);
+          addrState.d = addrState.DONE;
+          if (i_is_br_call) addrState.d = addrState.FETCH_HI;
+          if (i_y) addrState.d = addrState.IDX_Y;
         }
       addrState.IDX_Y:
         ld_st_addr.d = ld_st_addr.q + i_reg_y;
-        addrState.d = i_is_br_call ? addrState.FETCH_HI : addrState.DONE;
+        //addrState.d = i_is_br_call ? addrState.FETCH_HI : addrState.DONE;
+        addrState.d = addrState.DONE;
+        if (i_is_br_call) addrState.d = addrState.FETCH_HI;
       addrState.FETCH_HI:
         if (i_mm == 0) { addrState.d = addrState.DONE; }
         else {

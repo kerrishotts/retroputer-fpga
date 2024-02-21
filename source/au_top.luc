@@ -56,8 +56,8 @@ module au_top (
         
     .rst(rst) {
       cpu cpu;
-      ddr_arbiter mem_arbiter(#DEVICES(6));
-      lru_cache cache(#ENTRIES(1), #WORD_SIZE(8), #AGE_BITS(1));
+      ddr_arbiter mem_arbiter(#DEVICES(2));
+      lru_cache cache(#ENTRIES(2), #WORD_SIZE(8), #AGE_BITS(1));
       fsm state = { RUN_CPU, WAIT_MEM_READ, WAIT_MEM_WRITE, WAIT_IO_READ, WAIT_IO_READ_RDY, WAIT_IO_WRITE_RDY, MEM_FLUSH_CACHE };
       //fsm regint = { RUN, WAIT_READ, READ_IO };
       multi_seven_seg seg;
@@ -111,16 +111,17 @@ module au_top (
     mem_arbiter.master_out = mig.mem_out;
   
     // wire up the LRU cache ; it's at lowest priority to make room for video & other devices
-    mem_arbiter.device_in[5] = cache.mem_in;
-    cache.mem_out = mem_arbiter.device_out[5];
+    mem_arbiter.device_in[1] = cache.mem_in;
+    cache.mem_out = mem_arbiter.device_out[1];
     
     
     cache.flush = 0; // don't need to flush
-    cache.wr_addr = cpu.address;
+    cache.wr_addr = c{9b0, cpu.address};
     cache.wr_data = cpu.d_out;
     cache.wr_valid = 0;
-    cache.rd_addr = cpu.address;
+    cache.rd_addr = c{9b0, cpu.address};
     cache.rd_cmd_valid = 0;
+    cache.invalidate = 1b1;
     
     
     /* buttons & edge conditioners */    
@@ -143,8 +144,8 @@ module au_top (
     usb_tx = serial.usb_tx;
 
     // serial device wants access to memory
-    mem_arbiter.device_in[1] = serial.mem_in;
-    serial.mem_out = mem_arbiter.device_out[1];
+    mem_arbiter.device_in[0] = serial.mem_in;
+    serial.mem_out = mem_arbiter.device_out[0];
     
     // connect the io bus to the CPU and Serial device (this is NOT how we'll want to do it for real)
     iobus.bus_in.read = cpu.io_read | serial.bus_in.read;

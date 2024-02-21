@@ -2,6 +2,8 @@ import React, {useState, useEffect, useContext} from "react";
 import {Text, Newline,  useInput, useApp} from "ink";
 import { SerialPortContext } from "./contexts/SerialPortContext.js";
 
+import { disassemble } from "../../basm/disassemble.js";
+
 const idxs = {
 	io: [{h:"hour", b:10, w:4}, {h:"mins", b:10, w:4}, {h:"secs", b:10, w:4}, {h:"hund", b:10, w:4}, 
 	     {h:"tm0h", b:16, w:4}, {h:"tm0l", b:16, w:4}, {h:"tm1h", b:16, w:4}, {h:"tm1l", b:16, w:4}, 
@@ -174,6 +176,10 @@ export default function App() {
 			Idxs: {portData.map((data, idx) => <Text key={`hdg${idx}`} underline={sel===idx ? true : undefined}>{idxs[which][idx].h.padEnd(idxs[which][idx].w," ") + " "}</Text>)}
 			<Newline />
 			Data: {portData.map((data, idx) => <Text key={idx} underline={sel===idx ? true : undefined}>{data.toString(idxs[which][idx].b).padStart(idxs[which][idx].w,"0") + " "}</Text>)}
+			<Newline />
+			Inst: {
+				which === "reg" ? (disassemble([(portData[14] & 0xFF00) >> 8, portData[14] & 0x00FF, (portData[15] & 0xFF00) >> 8, portData[15] & 0x00FF]) || {}).code : 
+				which === "mem" ? (disassemble([portData[sel], portData[sel+1], portData[sel+2], portData[sel+3]]) || {}).code : "-"}
 			<Newline />
 			Reads: {counter}
 		</Text>

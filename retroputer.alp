@@ -8,7 +8,7 @@
     <component>fifo.luc</component>
     <component>counter.luc</component>
     <src>alu.luc</src>
-    <component>lru_cache.luc</component>
+    <src>lru_cache.luc</src>
     <src top="true">au_top.luc</src>
     <component>reset_conditioner.luc</component>
     <component>button_conditioner.luc</component>

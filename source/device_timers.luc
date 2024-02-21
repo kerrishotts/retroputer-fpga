@@ -81,19 +81,19 @@ module device_timers #(RTC_DEVICE_NUM = 4h0)(
     
     if (hs.q >= 9) {
       hs.d = 0;
-      rtc.d[3] = rtc.q[3] + 1;                // increment hundredths
+      rtc.d[3] = rtc.q[3] + 8d1;              // increment hundredths
       irq_service.d = 1;                      // signal CPU that time changed
-      if (rtc.q[3] >= 99) {                   // ... about to roll over?
-        rtc.d[3] = 0;                         // ... reset hundredths to zero
-        rtc.d[2] = rtc.q[2] + 1;              // ... increment seconds
-        if (rtc.q[2] >= 59) {                 // ... about to roll over?
-          rtc.d[2] = 0;                       // ... ... reset seconds to zero
-          rtc.d[1] = rtc.q[1] + 1;            // ... ... increment minutes
-          if (rtc.q[1] >= 59) {               // ... ... about to roll over?
-            rtc.d[1] = 0;                     // ... ... ... reset minutes to zero
-            rtc.d[0] = rtc.q[0] + 1;          // ... ... ... increment hours
-            if (rtc.q[0] >= 23) {             // ... ... ... about to roll over?
-              rtc.d[0] = 0;                   // ... ... ... ... reset hours to zer
+      if (rtc.q[3] >= 8d99) {                 // ... about to roll over?
+        rtc.d[3] = 8d0;                       // ... reset hundredths to zero
+        rtc.d[2] = rtc.q[2] + 8d1;            // ... increment seconds
+        if (rtc.q[2] >= 8d59) {               // ... about to roll over?
+          rtc.d[2] = 8d0;                     // ... ... reset seconds to zero
+          rtc.d[1] = rtc.q[1] + 8d1;          // ... ... increment minutes
+          if (rtc.q[1] >= 8d59) {             // ... ... about to roll over?
+            rtc.d[1] = 8d0;                   // ... ... ... reset minutes to zero
+            rtc.d[0] = rtc.q[0] + 8d1;        // ... ... ... increment hours
+            if (rtc.q[0] >= 8d23) {           // ... ... ... about to roll over?
+              rtc.d[0] = 8d0;                 // ... ... ... ... reset hours to zer
             }
           }
         }
