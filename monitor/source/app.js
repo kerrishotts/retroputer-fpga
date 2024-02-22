@@ -15,8 +15,12 @@ const idxs = {
 		{h:"clkc", b:16, w:4}, {h:"clk*", b:16, w:4}, {h: "InHi", b:16, w:4}, {h:"InLo", b:16, w:4}],
 	mem: [{h:"00", b:16, w:2}, {h:"01", b:16, w:2}, {h:"02", b:16, w:2}, {h:"03", b:16, w:2}, 
 	     {h:"04", b:16, w:2}, {h:"05", b:16, w:2}, {h:"06", b:16, w:2}, {h:"07", b:16, w:2}, 
-		 {h:"08", b:16, w:2}, {h:"09", b:16, w:2}, {h:"0A", b:16, w:2}, {h:"08", b:16, w:2},
+		 {h:"08", b:16, w:2}, {h:"09", b:16, w:2}, {h:"0A", b:16, w:2}, {h:"0B", b:16, w:2},
 		 {h:"0C", b:16, w:2}, {h:"0D", b:16, w:2}, {h:"0E", b:16, w:2}, {h:"0F", b:16, w:2}],
+}
+
+function toAscii(data) {
+	return data.map(byte => ((byte >= 32 && byte <= 126) /*|| (byte >= 128)*/) ? String.fromCharCode(byte) : ".").join("");
 }
 
 export default function App() {
@@ -32,6 +36,7 @@ export default function App() {
 	const [ sel, setSel] = useState(0);
 	const [ memBase, setMemBase] = useState(0xFF00);
 	const [ ioBase, setIoBase] = useState(0x00);
+	const [ autoRefresh, setAutoRefresh] = useState(true);
 
 	useInput((input, key) => {
 		if (input === "s") {
@@ -101,6 +106,9 @@ export default function App() {
 		if (input === 'q') {
 			exit();
 		}
+		if (input === "p") {
+			setAutoRefresh(prevAutoRefresh => !prevAutoRefresh);
+		}
 	});
 
 	useEffect(() => {
@@ -109,6 +117,7 @@ export default function App() {
 		const handler = () => {
 			setPortStatus(true);
 			id = setInterval(() => {
+				if (!autoRefresh) return;
 				setCounter(previousCounter => previousCounter + 1);
 				if (port.isOpen) {
 					let length, width;
@@ -123,9 +132,9 @@ export default function App() {
 						length = 16;
 					}
 					if (which === "mem") {
-						port.isOpen && /*port.drain(() =>*/ port.write([0x4f,memBase & 0x00FF,(memBase & 0xFF00) >> 8, (memBase & 0x70000) >> 16,0x00])//);
+						port.isOpen && /*port.drain(() =>*/ port.write([0x7f,memBase & 0x00FF,(memBase & 0xFF00) >> 8, (memBase & 0x70000) >> 16,0x00])//);
 						width = 8;
-						length = 16;
+						length = 64;
 					}
 					if (port.isOpen) {
 						let buf = null;
@@ -163,7 +172,7 @@ export default function App() {
 			if (port.isOpen) port.close();
 			clearInterval(id);
 		}
-	}, [which, memBase, ioBase]);
+	}, [which, memBase, ioBase, autoRefresh]);
 
 	return (
 		<Text>
@@ -173,13 +182,15 @@ export default function App() {
 			<Newline />
 			Which: {which} Base: {which == "mem" ? memBase.toString(16).padStart(5,"0") : which == "io" ? ioBase.toString(16).padStart(2,"0") : "N/A"} Sel: {sel} Value: {hexIn}
 			<Newline />
-			Idxs: {portData.map((data, idx) => <Text key={`hdg${idx}`} underline={sel===idx ? true : undefined}>{idxs[which][idx].h.padEnd(idxs[which][idx].w," ") + " "}</Text>)}
+			Idxs: <Newline />{portData.slice(0,16).map((data, idx) => <Text key={`hdg${idx}`} underline={sel===idx ? true : undefined}>{idxs[which][idx & 0xF].h.padEnd(idxs[which][idx & 0xf].w," ") + " "}</Text>)}
 			<Newline />
-			Data: {portData.map((data, idx) => <Text key={idx} underline={sel===idx ? true : undefined}>{data.toString(idxs[which][idx].b).padStart(idxs[which][idx].w,"0") + " "}</Text>)}
+			Data: <Newline />{portData.map((data, idx) => <Text key={idx} underline={sel===idx ? true : undefined}>{data.toString(idxs[which][idx & 0xF].b).padStart(idxs[which][idx & 0xF].w,"0") + (((idx & 0xF) === 0xF) ? "\n" : " ")}</Text>)}
 			<Newline />
 			Inst: {
 				which === "reg" ? (disassemble([(portData[14] & 0xFF00) >> 8, portData[14] & 0x00FF, (portData[15] & 0xFF00) >> 8, portData[15] & 0x00FF]) || {}).code : 
 				which === "mem" ? (disassemble([portData[sel], portData[sel+1], portData[sel+2], portData[sel+3]]) || {}).code : "-"}
+			<Newline />
+			Ascii: { toAscii(portData) }
 			<Newline />
 			Reads: {counter}
 		</Text>
