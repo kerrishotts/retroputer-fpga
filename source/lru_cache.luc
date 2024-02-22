@@ -67,8 +67,7 @@ module lru_cache #(
     input flush,
     output flush_ready,
     input<Memory.out> mem_out,
-    output<Memory.in> mem_in,
-    input invalidate
+    output<Memory.in> mem_in
   ) {
   
   const WORDS_PER_LINE = 128 / WORD_SIZE;
@@ -136,6 +135,7 @@ module lru_cache #(
     max_age = 0;
     oldest_entry = 0;
     
+    
     handled = 0;
     for (i = 0; i < ENTRIES; i++) {
       if (!handled) {
@@ -161,15 +161,12 @@ module lru_cache #(
           handled = 0;
           for (i = 0; i < ENTRIES; i++) {
             if (!handled && active.q[i] && valid.q[i][SUB_ADDR_BITS > 0 ? rd_addr[SUB_ADDR_BITS-1:0] : 0] && (address.q[i] == rd_addr[ADDR_SIZE-1:SUB_ADDR_BITS])) {
-              if (invalidate) {
-                active.d[i] = 0;
-                valid.d[i][SUB_ADDR_BITS > 0 ? rd_addr[SUB_ADDR_BITS-1:0] : 0] = 0;
-              } else {
-                handled = 1;
-                read_valid.d = 1;
-                read_data.d = buffer.q[i][SUB_ADDR_BITS > 0 ? rd_addr[SUB_ADDR_BITS-1:0] : 0];
-                age.d[i] = 0; // reset the age on an access
-              }
+            
+              handled = 1;
+              read_valid.d = 1;
+              read_data.d = buffer.q[i][SUB_ADDR_BITS > 0 ? rd_addr[SUB_ADDR_BITS-1:0] : 0];
+              age.d[i] = 0; // reset the age on an access
+            
             }
           }
           if (!handled) { // entry isn't in the cache

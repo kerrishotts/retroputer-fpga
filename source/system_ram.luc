@@ -1,0 +1,45 @@
+module system_ram(
+    input clk,  // clock
+    input rst,  // reset
+    
+    input wr_addr[19],
+    input wr_data[8],
+    input wr_valid,
+    output wr_ready,
+    
+    input rd_addr[19],
+    input rd_cmd_valid,
+    output rd_ready,
+    output rd_data[8],
+    output rd_data_valid,
+    
+    input<Memory.out> mem_out,
+    output<Memory.in> mem_in
+    
+  ) {
+
+  .clk(clk), .rst(rst) {
+    dff read_pending;
+    dff write_pending;
+    fsm state = { IDLE, WRITE_1_FIFO, WRITE_2_ };
+    
+  }
+  
+  always {
+  
+    mem_in.en = 0;
+    mem_in.cmd = 3bx;
+    mem_in.addr = c{6b0, wr_addr, 3b0};
+    mem_in.wr_en = 0;
+    mem_in.wr_data = 16x{wr_data};
+    mem_in.wr_mask = 128b1;
+    mem_in.wr_mask[ wr_addr[3:0] ] = 8b1;
+    
+    wr_ready = mem_out.wr_rdy & !write_pending.q;
+    rd_ready = !read_pending.q;
+    rd_data = mem_out.rd_data[ wr_addr[3:0]*8 +:8 ];
+    rd_data_valid = mem_out.rd_valid;
+    
+    
+  }
+}

@@ -11,6 +11,7 @@
     <src>lru_cache.luc</src>
     <src top="true">au_top.luc</src>
     <component>reset_conditioner.luc</component>
+    <src>system_ram.luc</src>
     <component>button_conditioner.luc</component>
     <src>device_timers.luc</src>
     <src>instLUT.luc</src>

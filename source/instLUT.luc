@@ -56,7 +56,7 @@ global Op {
   const POPF       = 8hA3;
   const PUSHMM     = 8hA4;
   const POPMM      = 8hA5;
-  const RET        = 8hA6;
+  const RET        = 8hA7;
   const MUL_D_S    = 8hA8;
   const DIV_D_S    = 8hA9;
   const MOD_D_S    = 8hAA;
@@ -268,8 +268,8 @@ module instLUT (
       hA3: out = c{InstWidth.ONE,   Op.POPF};
       hA4: out = c{InstWidth.ONE,   Op.PUSHMM};
       hA5: out = c{InstWidth.ONE,   Op.POPMM};
-      hA6: out = c{InstWidth.ONE,   Op.RET};
-      hA7: out = c{InstWidth.ONE,   Op.INVALID};
+      hA6: out = c{InstWidth.ONE,   Op.INVALID};
+      hA7: out = c{InstWidth.ONE,   Op.RET};
       
       hA8: out = c{InstWidth.TWO,   Op.MUL_D_S};
       hA9: out = c{InstWidth.TWO,   Op.DIV_D_S};
