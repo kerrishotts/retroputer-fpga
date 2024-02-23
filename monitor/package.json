@@ -10,7 +10,11 @@
 	"scripts": {
 		"build": "babel --out-dir=dist source",
 		"dev": "babel --out-dir=dist --watch source",
-		"test": "prettier --check . && xo && ava"
+		"test": "prettier --check . && xo && ava",
+
+		"load:kernel": "node ./dist/cli.js --load=../asm/roms/kernel.bin --addr=0x70000",
+		"mon": "node ./dist/cli.js"
+
 	},
 	"files": [
 		"dist"
