@@ -324,7 +324,7 @@ module cpu (
             alu.a = destRegSize ? /* BYTE */ c{8b0, reg.q[destReg][7:0]} : reg.q[destReg];
             alu.size_b = srceRegSize;
             alu.b = srceRegSize ? /* BYTE */ c{8b0, reg.q[srceReg][7:0]} : reg.q[srceReg];
-            if (is_immediate) alu.b = srceRegSize ? /* BYTE */ inst.q[2] : c{inst.q[2], inst.q[3]};
+            if (is_immediate) alu.b = srceRegSize ? /* BYTE */ c{8b0, inst.q[1]} : c{inst.q[1], inst.q[2]};
             if (is_nybble) alu.b = c{12b0, inst.q[1][3:0]};
             alu.carry_in = flg_c; //reg.q[Reg.IRQ_FLAGS][2];
             skip = 0; // if skip isn't set, we'll store the result of aluOp back in dest
@@ -334,7 +334,7 @@ module cpu (
             case (is_immediate ? instOpExec.q[5:3] : instOpExec.q[2:0]) {
               3b001: alu.op = AluOps.ADD;
               3b010: alu.op = AluOps.SUB;
-              3b011: alu.op = AluOps.SUB; skip = 1; // cmp is subtract, but don't store result
+              3b011: alu.op = AluOps.SUB; alu.carry_in = 0; skip = 1; // cmp is subtract, but don't store result
               3b100: alu.op = AluOps.AND;
               3b101: alu.op = AluOps.OR;
               3b110: alu.op = AluOps.AND; skip = 1; // test is AND, but don't store result
@@ -395,10 +395,10 @@ module cpu (
             srceReg = inst.q[1][3:1];
             srceRegSize = inst.q[1][0];
             if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = reg.q[srceReg][7:0];
-            else             /* WORD */ reg.d[destReg] = reg.q[srceReg];
+            else             /* WORD */ reg.d[destReg] = srceRegSize ? /* BYTE */ c{8b0, reg.q[srceReg][7:0]} : reg.q[srceReg];
             if (!instOpExec.q[0] /* SWAP */) {
               if (srceRegSize) /* BYTE */ reg.d[srceReg][7:0] = reg.q[destReg][7:0];
-              else             /* WORD */ reg.d[srceReg] = reg.q[destReg];
+              else             /* WORD */ reg.d[srceReg] = destRegSize ? /* BYTE */ c{8b0, reg.q[destReg][7:0]} : reg.q[destReg];
             } 
           }
           
