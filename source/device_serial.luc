@@ -248,7 +248,8 @@ module device_serial #(
         cache.wr_data = c{fifo_mem_in.dout[7:0], 8b0};
         fifo_mem_in.rget = 1;
         cache.wr_valid = 1;
-        waiting_for_cache_flush.d = 1;
+        waiting_for_cache_flush.d = !cache.flush_ready;
+        if (cache.flush_ready) cache.flush = 1;
         wrote_to_memory = 1;
       }
     }
