@@ -1,0 +1,13 @@
+{
+    "name": "retroputer-kernel",
+    "version": "2.0.0",
+    "description": "retroputer kernel",
+    "scripts": {
+        "build:basic:tokens": "node kernel/basic/tokens.js tokens > kernel/basic/tokens.asm",
+        "build:basic:stmts": "node kernel/basic/tokens.js stmt > kernel/basic/stmt-tokens.asm",
+        "build:basic:exprs": "node kernel/basic/tokens.js expr > kernel/basic/expr-tokens.asm",
+        "build:basic": "npm run build:basic:tokens && npm run build:basic:stmts && npm run build:basic:exprs",
+        "build:kernel": "npm run build:basic && ../basm/index.js -d kernel -x vectors,kdata,krodata -i kernel/kernel.asm -o roms/kernel.js",
+        "build:kernel:bin": "npm run build:basic && ../basm/index.js -d kernel -x vectors,kdata,krodata -i kernel/kernel.asm -f bin -a 0x70000 -z 0x7FFFF -o roms/kernel.bin"
+    }
+}
