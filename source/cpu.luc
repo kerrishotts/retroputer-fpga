@@ -307,6 +307,7 @@ module cpu (
         state.EXECUTE:
           state.d = state.NEXT;
 
+          /* ALU_ARITHMETIC_1 */
           if ((instOpExec.q >= Op.ADD_D_S && instOpExec.q <= Op.XOR_D_S) || (instOpExec.q >= Op.MUL_D_S && instOpExec.q <= Op.SMOD_D_S)
             || instOpExec.q == Op.SHL_D_S || instOpExec.q == Op.SHR_D_S
             || instOpExec.q == Op.SHL_D_IMMN || instOpExec.q == Op.SHR_D_IMMN
@@ -334,10 +335,10 @@ module cpu (
             case (is_immediate ? instOpExec.q[5:3] : instOpExec.q[2:0]) {
               3b001: alu.op = AluOps.ADD;
               3b010: alu.op = AluOps.SUB;
-              3b011: alu.op = AluOps.SUB; alu.carry_in = 0; skip = 1; // cmp is subtract, but don't store result
+              3b011: alu.op = AluOps.SUB; // cmp is subtract, but don't store result (we set in later case)
               3b100: alu.op = AluOps.AND;
               3b101: alu.op = AluOps.OR;
-              3b110: alu.op = AluOps.AND; skip = 1; // test is AND, but don't store result
+              3b110: alu.op = AluOps.AND; // test is AND, but don't store result (later)
               3b111: alu.op = AluOps.XOR;
             }
             if (!is_immediate) {
@@ -357,6 +358,16 @@ module cpu (
               if (instOpExec.q == Op.SHR_D_IMMN) alu.op = AluOps.SHR;
             }
             
+            case (instOpExec.q) {
+              Op.CMP_D_IMMB:  skip = 1;
+              Op.CMP_D_IMMW:  skip = 1;
+              Op.CMP_D_S:     skip = 1;
+              Op.TEST_D_IMMB: skip = 1;
+              Op.TEST_D_IMMW: skip = 1;
+              Op.TEST_D_S:    skip = 1;
+            }
+            
+            if (skip) alu.carry_in = 0;
             
             if (!skip) {
               if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = alu.result[7:0];
@@ -365,10 +376,12 @@ module cpu (
             reg.d[Reg.IRQ_FLAGS][3:0] = c{alu.negative, alu.carry, alu.overflow, alu.zero};              
           }
           
+          /* TRAP */
           if (instOpExec.q == Op.TRAP_IMMB || instOpExec.q == Op.TRAP_S) { // TODO: implement TRAPs
             //state.d = state.NEXT;
           }
-                    
+          
+          /* NOT_NEG */
           if (instOpExec.q == Op.NOT_D || instOpExec.q == Op.NEG_D) {
             destReg = inst.q[1][3:1];
             destRegSize = inst.q[1][0];
@@ -380,6 +393,7 @@ module cpu (
             reg.d[Reg.IRQ_FLAGS][3:0] = c{alu.negative, alu.carry, alu.overflow, alu.zero};            
           }
           
+          /* EXC */
           if (instOpExec.q == Op.EXC_D) {
             destReg = inst.q[1][3:1];
             destRegSize = inst.q[1][0];
@@ -389,6 +403,7 @@ module cpu (
             // TODO: EMULATOR DIFF
           }
           
+          /* SWAP_MOV */
           if (instOpExec.q == Op.SWAP_D_S || instOpExec.q == Op.MOV_D_S) {
             destReg = inst.q[1][7:5];
             destRegSize = inst.q[1][4];
@@ -402,16 +417,19 @@ module cpu (
             } 
           }
           
+          /* LD_1 */
           if (instOpExec.q == Op.LD_D_IMMW) {
             destReg = inst.q[0][3:1];
             reg.d[destReg] = c{inst.q[2], inst.q[3]};
           }
           
+          /* LD_2 */
           if (instOpExec.q == Op.LD_D_IMMB) {
             destReg = inst.q[0][3:1];
             reg.d[destReg][7:0] = inst.q[2];
           }
           
+          /* LD_ST */
           if (instOpExec.q == Op.LD_D_ADDR || instOpExec.q == Op.ST_S_ADDR) {
             state.d = state.EXECUTE; // keep us in this state (we'll move forward after we ld or st)
             store = instOpExec.q == Op.ST_S_ADDR; //inst.q[0][5]; // if not set, loading
@@ -473,6 +491,7 @@ module cpu (
             }
           }
           
+          /* INC_DEC_LOOP */
           if (instOpExec.q == Op.INC_D || instOpExec.q == Op.DEC_D || instOpExec.q == Op.LOOPS_ADR || instOpExec.q == Op.LOOP_ADDR) {
             destReg = inst.q[0][3:1];
             destRegSize = inst.q[0][0];
@@ -494,6 +513,7 @@ module cpu (
             }
           }
           
+          /* IN */
           if (instOpExec.q == Op.IN_D_IMMB) {
             destReg = inst.q[1][7:5];
             destRegSize = inst.q[1][4];
@@ -506,6 +526,7 @@ module cpu (
             } else state.d = state.EXECUTE; // stick around for another cycle
           }
           
+          /* OUT */
           if (instOpExec.q == Op.OUT_S_IMMB) {
             srceReg = inst.q[1][7:5];
             srceRegSize = inst.q[1][4];
@@ -514,6 +535,7 @@ module cpu (
             port = inst.q[2];
           }
           
+          /* ENTER */
           if (instOpExec.q == Op.ENTER_IMMB) {
             target_reg.d = Reg.BP;
             target_reg_size.d = AluSize.WORD;
@@ -526,6 +548,7 @@ module cpu (
             }
           }
           
+          /* EXIT */
           if (instOpExec.q == Op.EXIT_IMMB) {
             reg.d[Reg.SP] = reg.q[Reg.SP] + c{8b0, inst.q[1]};
             target_reg.d = Reg.BP;
@@ -534,9 +557,11 @@ module cpu (
             state.d = state.POP_HI;
           }
               
+          /* BRK_HALT */
           if ((instOpExec.q == Op.BRK && dbe) || instOpExec.q == Op.HALT)
               state.d = state.HALT;
-            
+          
+          /* BR */
           if (instOpExec.q == Op.BRS_ADR || instOpExec.q == Op.BR_ADDR) {
             state.d = state.EXECUTE; // keep us in this state (we'll move forward after we ld or st)
 
@@ -597,6 +622,7 @@ module cpu (
             }
           }
           
+          /* PUSH_POP_RET */
           if ((instOpExec.q >= Op.PUSHALL && instOpExec.q <= Op.RET) ||
               instOpExec.q == Op.PUSH_S  || instOpExec.q == Op.POP_D) {
             is_target_var = instOpExec.q == Op.PUSH_S  || instOpExec.q == Op.POP_D;
@@ -647,19 +673,23 @@ module cpu (
             }
           }
           
+          /* FPU */
           if (instOpExec.q == Op.FPU) {
           }
           
+          /* SET */
           if (instOpExec.q == Op.SET_F) {
             decode_flags.in = inst.q[0][2:0];
             reg.d[Reg.IRQ_FLAGS][7:0] = reg.q[Reg.IRQ_FLAGS] | decode_flags.out;           
           }
           
+          /* CLR */
           if (instOpExec.q == Op.CLR_F) {
             decode_flags.in = inst.q[0][2:0];
             reg.d[Reg.IRQ_FLAGS][7:0] = reg.q[Reg.IRQ_FLAGS] & ~decode_flags.out;           
           }
 
+          /* WAIT */
           if (instOpExec.q == Op.WAIT_IMMB) {
           }
           
