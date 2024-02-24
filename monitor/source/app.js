@@ -37,6 +37,7 @@ export default function App() {
 	const [ memBase, setMemBase] = useState(0xFF00);
 	const [ ioBase, setIoBase] = useState(0x00);
 	const [ autoRefresh, setAutoRefresh] = useState(true);
+	const [ con, setCon ] = useState("");
 
 	useInput((input, key) => {
 		if (input === "s") {
@@ -156,6 +157,29 @@ export default function App() {
 					} else {
 						setPortData([]);
 					}
+/*
+					// get the console
+					//port.drain(() => {
+					if (port.isOpen) {
+						port.drain( () => {
+							port.write([0x0F,0x01, 0x00 ,0x00,0x40]); // Request read
+							port.drain( () => {
+								let buf = port.read(64);
+								if (buf) {
+									let data = Array.from(buf);
+									console.log(data.length);
+									const bytes = data.reduce((acc, cur, idx) => {
+										//if (idx % 4 === 0) 
+											acc.push(cur);
+										return acc;
+									}, []);
+									const str = bytes.filter(byte => byte !== 0).map(byte => byte > 32 ? String.fromCharCode(byte) : ".").join("");
+									//const str = bytes.join(",");
+									if (str.length > 0) setCon(prevCon => prevCon + str);
+								}
+							});
+						});
+					}*/
 				}
 			},  125);
 		};
@@ -193,6 +217,8 @@ export default function App() {
 			Ascii: { toAscii(portData) }
 			<Newline />
 			Reads: {counter}
+			<Newline />
+			Console: {con}
 		</Text>
 	);
 }

@@ -19,6 +19,7 @@ const cli = meow(
 			--load  path to .bin file
 			--fmt   file format (defaults to bin), but can also be txt
 			--addr  address to load or dump; prefix w/ 0x for hex
+			--con   interactive serial console (to Retroputer)
 
 		Examples
 		  $ monitor --path=/dev/tty.usbserial-FT4ZS6I31 --baud=1000000
@@ -34,8 +35,31 @@ const port = new SerialPort({ path, baudRate, autoOpen: false });
 const load = cli.flags.load;
 const fmt = cli.flags.fmt || "bin";
 const addr = Number(cli.flags.addr) || 0;
+const con = cli.flags.con;
 
-if (load) {
+if (con) {
+	if (!port.isOpen) port.open();
+	let state = 0, i = 0;
+	const handler = () => {
+		setInterval(() => {
+			i++;
+			switch(state) {
+				case 0:
+					port.write([0x3F,0x01, 0x00 ,0x00,0x40]); // Request read
+					break;
+				case 1:
+			}
+		}, 4)
+	}
+	port.on("open", handler);
+	port.on("error", error => console.error(error.message))
+	port.on("data", data => {
+		if (data) data.forEach(byte => {
+			if (byte === 13) console.log();
+			if (byte >= 32) process.stdout.write(String.fromCharCode(byte))
+		});
+	})
+} else if (load) {
 	console.log (`Loading from ${load}...`);
 	if (!port.isOpen) port.open();
 	const handler = () => {
