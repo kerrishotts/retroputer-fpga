@@ -293,6 +293,7 @@ module au_top (
           state.d = state.WAIT_IO_READ_RDY;
         }
         if (cpu.io_write) {
+          tmp_d_out.d = c{8b0,cpu.io_out};
           state.d = state.WAIT_IO_WRITE_RDY;
         }
       state.WAIT_MEM_READ:                   // Waiting for data from RAM
@@ -333,6 +334,7 @@ module au_top (
         }
       state.WAIT_IO_WRITE_RDY:
         if (iobus.bus_out.rdy) {
+          iobus.bus_in.wr_data = tmp_d_out.q[7:0];
           iobus.bus_in.write = 1;
           cpu.ready = 1;
           state.d = state.RUN_CPU;

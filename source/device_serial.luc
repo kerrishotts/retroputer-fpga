@@ -154,7 +154,7 @@ module device_serial #(
               device_out.rd_valid[CONSOLE_DEVICE_NUM] = 1; 
             }
           PORT_RD_RDY:
-            device_out.rd_data = c{7b0, fifo_console_in.empty};
+            device_out.rd_data = c{7b0, !fifo_console_in.empty};
             device_out.rd_valid[CONSOLE_DEVICE_NUM] = 1;    
           PORT_WR_RDY:
             device_out.rd_data = c{7b0, !fifo_console_out.full};
@@ -219,6 +219,9 @@ module device_serial #(
                   reg_interface.regIn.data = fifo_console_out.dout;
                   reg_interface.regIn.drdy = 1;
                   fifo_console_out.rget = 1; // advance to next character, if any
+                } else {
+                  reg_interface.regIn.data = 0; // no data available
+                  reg_interface.regIn.drdy = 1;
                 }
             }          
           BUS_BANK: // read i/o 
