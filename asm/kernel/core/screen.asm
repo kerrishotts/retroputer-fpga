@@ -1067,6 +1067,29 @@
         }
 
         ##
+        ## Vector: LPUT_CHAR
+        ## Paramters: DL - Character to put on console
+        ##
+        ## Puts the character on the console device. This will wait until the
+        ## console buffer is not full so that data is not lost.
+        #######################################################################
+        lput-char: {
+                pushf
+                push a
+            _main:
+                halt
+            _wait:
+                in al, 0x84                     # if !Z, we can write
+                cmp al, 0x00
+                brs z, _wait                    # if Z, buffer is full; wait until frees up
+                out 0x81, dl                    # write to console
+            _out:
+                pop a
+                popf
+                ret
+        }
+
+        ##
         ## Vector: PRINT
         ## Parameters: D, X - NUL-terminated string to print on screen
         ## Returns: none
@@ -1082,6 +1105,7 @@
                 while !z do {
                     swap a, d
                     call put-char
+                    call lput-char
                     swap a, d
                     inc x
                     al := [d, x]
