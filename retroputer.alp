@@ -11,13 +11,11 @@
     <src>lru_cache.luc</src>
     <src top="true">au_top.luc</src>
     <component>reset_conditioner.luc</component>
-    <src>system_ram.luc</src>
     <component>button_conditioner.luc</component>
     <src>device_timers.luc</src>
     <src>instLUT.luc</src>
     <component>simple_dual_ram.v</component>
     <src>cpu.luc</src>
-    <src>taskLUT.luc</src>
     <component>decoder.luc</component>
     <src>memory_mapper.luc</src>
     <src>addressing_unit.luc</src>
