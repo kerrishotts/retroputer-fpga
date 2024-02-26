@@ -7,6 +7,7 @@ import fs from "fs";
 
 import { SerialPortContext } from './contexts/SerialPortContext.js';
 import {SerialPort} from 'serialport';
+import { terminal } from './terminal.js';
 
 const cli = meow(
 	`
@@ -38,7 +39,9 @@ const addr = Number(cli.flags.addr) || 0;
 const con = cli.flags.con;
 
 if (con) {
-	if (!port.isOpen) port.open();
+	console.log("calling")
+	await terminal(port);
+/*	if (!port.isOpen) port.open();
 	let state = 0, i = 0;
 	const handler = () => {
 		setInterval(() => {
@@ -58,7 +61,7 @@ if (con) {
 			if (byte === 13) console.log();
 			if (byte >= 32) process.stdout.write(String.fromCharCode(byte))
 		});
-	})
+	})*/
 } else if (load) {
 	console.log (`Loading from ${load}...`);
 	if (!port.isOpen) port.open();
