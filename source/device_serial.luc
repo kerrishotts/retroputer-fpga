@@ -148,7 +148,7 @@ module device_serial #(
             if (!fifo_console_in.empty) {
               device_out.rd_data = fifo_console_in.dout;
               device_out.rd_valid[CONSOLE_DEVICE_NUM] = 1;
-              fifo_console_out.rget = 1;
+              fifo_console_in.rget = 1;
             } else {
               device_out.rd_data = 0; // return null; but this isn't actually a valid piece of data
               device_out.rd_valid[CONSOLE_DEVICE_NUM] = 1; 
