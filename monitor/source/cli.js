@@ -37,6 +37,7 @@ const load = cli.flags.load;
 const fmt = cli.flags.fmt || "bin";
 const addr = Number(cli.flags.addr) || 0;
 const con = cli.flags.con;
+const firstView = cli.flags.first || "reg";
 
 if (con) {
 	console.log("calling")
@@ -112,7 +113,7 @@ if (con) {
 else {
 	render(
 		<SerialPortContext.Provider value={port}>
-			<App />
+			<App firstView={firstView}/>
 		</SerialPortContext.Provider>
 	);
 }

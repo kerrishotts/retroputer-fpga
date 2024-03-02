@@ -23,7 +23,7 @@ function toAscii(data) {
 	return data.map(byte => ((byte >= 32 && byte <= 126) /*|| (byte >= 128)*/) ? String.fromCharCode(byte) : ".").join("");
 }
 
-export default function App() {
+export default function App({firstView} = {}) {
 	const {exit} = useApp();
 	const port = useContext(SerialPortContext);
 
@@ -31,7 +31,7 @@ export default function App() {
 	const [ portError, setPortError ] = useState("");
 	const [ portData, setPortData ] = useState([]);
 	const [ counter, setCounter ] = useState(0);
-	const [ which, setWhich] = useState("reg");
+	const [ which, setWhich] = useState(firstView || "reg");
 	const [ hexIn, setHexIn] = useState("");
 	const [ sel, setSel] = useState(0);
 	const [ memBase, setMemBase] = useState(0xFF00);
