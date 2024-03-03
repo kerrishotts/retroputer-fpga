@@ -57,7 +57,8 @@ module au_top (
     .rst(rst) {
       cpu cpu;
       ddr_arbiter mem_arbiter(#DEVICES(2));
-      lru_cache cache(#ENTRIES(1), #WORD_SIZE(16), #AGE_BITS(1));
+      //lru_cache cache(#ENTRIES(1), #WORD_SIZE(16), #AGE_BITS(1));
+      system_ram cache;
       fsm state = { RUN_CPU, WAIT_MEM_READ, WAIT_MEM_WRITE, WAIT_IO_READ, WAIT_IO_READ_RDY, WAIT_IO_WRITE_RDY, MEM_FLUSH_CACHE };
       //fsm regint = { RUN, WAIT_READ, READ_IO };
       multi_seven_seg seg;
@@ -115,9 +116,9 @@ module au_top (
     cache.mem_out = mem_arbiter.device_out[1];
     
     
-    cache.flush = 0; // don't need to flush
+    //cache.flush = 0; // don't need to flush
     cache.wr_addr = c{9b0, cpu.address};
-    cache.wr_data = c{cpu.d_out, 8b0};
+    cache.wr_data = cpu.d_out; //c{cpu.d_out, 8b0};
     cache.wr_valid = 0;
     cache.rd_addr = c{9b0, cpu.address};
     cache.rd_cmd_valid = 0;
@@ -271,7 +272,7 @@ module au_top (
             }
             if (cache.rd_data_valid) {           // If data is available
               cpu.ready = 1;                     // ... CPU can run 
-              cpu.d_in = cache.rd_data[15:8];          // ... send the data in
+              cpu.d_in = cache.rd_data/*[15:8]*/;          // ... send the data in
               cpu.d_rdy = 1;                     // ... and notify CPU
             }
           }
@@ -299,23 +300,23 @@ module au_top (
       state.WAIT_MEM_READ:                   // Waiting for data from RAM
         if (cache.rd_data_valid) {           // If data is available
           cpu.ready = 1;                     // ... CPU can run 
-          cpu.d_in = cache.rd_data[15:8];          // ... send the data in
+          cpu.d_in = cache.rd_data/*[15:8]*/;          // ... send the data in
           cpu.d_rdy = 1;                     // ... and notify CPU
           state.d = state.RUN_CPU;           // ... move back to RUN CPU
         }
       state.WAIT_MEM_WRITE:                // don't run CPU
         if (cache.wr_ready) {              // ... can we write to memory? 
-          cache.wr_data = c{tmp_d_out.q, 8b0};
+          cache.wr_data = tmp_d_out.q; //c{tmp_d_out.q, 8b0};
           cache.wr_addr = tmp_addr.q;
           cache.wr_valid = 1;              // ... notify cache to write the data
-          state.d = state.MEM_FLUSH_CACHE; 
+          state.d = state.RUN_CPU; //state.MEM_FLUSH_CACHE; 
         }
       state.MEM_FLUSH_CACHE:
         // wait until the data is actually written, then flush.
-        if (cache.wr_ready && cache.flush_ready) {
-          cache.flush = 1;
+        //if (cache.wr_ready && cache.flush_ready) {
+        //  cache.flush = 1;
           state.d = state.RUN_CPU;
-        }
+        //}
       state.WAIT_IO_READ_RDY:
         if (iobus.bus_out.rdy) {
             iobus.bus_in.read = 1;

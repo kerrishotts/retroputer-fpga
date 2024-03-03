@@ -35,13 +35,14 @@ module device_serial #(
 //  dff waiting_for_mem_write;
     dff waiting_for_mem_read;
     dff waiting_for_cache_flush;
-    lru_cache cache(#ENTRIES(1), #WORD_SIZE(16), #AGE_BITS(1));
+    //lru_cache cache(#ENTRIES(1), #WORD_SIZE(16), #AGE_BITS(1));
+    system_ram cache;
     fifo fifo_console_in(#SIZE(8), #DEPTH(256));
     fifo fifo_console_out(#SIZE(8), #DEPTH(256));
     fifo fifo_mem_in(#SIZE(27), #DEPTH(256));
     #CLK_FREQ(81250000) {
     reg_interface reg_interface;
-      #BAUD(/*812500*/1000000) {        // The baud rate of the uarts
+      #BAUD(812500/*1000000*/) {        // The baud rate of the uarts
         uart_rx uart_rx;      // The uart required by the register interace
         uart_tx uart_tx;      // The uart required by the register interace
       }
@@ -97,7 +98,7 @@ module device_serial #(
     cache.mem_out = mem_out;
     
     // set cache defaults (don't care about data, but don't flush, don't write, and don't read)
-    cache.flush = 0;
+    //cache.flush = 0;
     cache.wr_addr = 18bx;
     cache.wr_data = 16bx;
     cache.wr_valid = 0;
@@ -248,20 +249,20 @@ module device_serial #(
     if (!fifo_mem_in.empty) { // we have memory to write!
       if (cache.wr_ready) {   // safe to write to memory
         cache.wr_addr = fifo_mem_in.dout[26:8];
-        cache.wr_data = c{fifo_mem_in.dout[7:0], 8b0};
+        cache.wr_data = fifo_mem_in.dout[7:0]; //c{fifo_mem_in.dout[7:0], 8b0};
         fifo_mem_in.rget = 1;
         cache.wr_valid = 1;
-        waiting_for_cache_flush.d = !cache.flush_ready;
-        if (cache.flush_ready) cache.flush = 1;
+        //waiting_for_cache_flush.d = !cache.flush_ready;
+        //if (cache.flush_ready) cache.flush = 1;
         wrote_to_memory = 1;
       }
     }
-    if (waiting_for_cache_flush.q) {
-      if (cache.flush_ready) {
-        waiting_for_cache_flush.d = 0;
-        cache.flush = 1;
-      }
-    }
+    //if (waiting_for_cache_flush.q) {
+    //  if (cache.flush_ready) {
+    //    waiting_for_cache_flush.d = 0;
+    //    cache.flush = 1;
+    //  }
+    //}
 //    if (waiting_for_mem.q) {
 /*    if (waiting_for_mem_write.q) {
         if (cache.wr_ready) {
@@ -289,7 +290,7 @@ module device_serial #(
           cache.rd_cmd_valid = 1;
         }
         if (cache.rd_data_valid) {
-          reg_interface.regIn.data = cache.rd_data[15:8];
+          reg_interface.regIn.data = cache.rd_data/*[15:8]*/;
           reg_interface.regIn.drdy = 1;
           waiting_for_mem_read.d = 0; 
         }

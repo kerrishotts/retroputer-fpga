@@ -63,7 +63,7 @@ export class RetroputerInterface {
     waitUntilReady({timeout = 30000 /* 3 secs */} = {}) {
         return new Promise((resolve, reject) => {
             if (!this.#port.isOpen) reject(new Error("Port not open"));
-            if (this.#ready) resolve();
+            if (this.#ready) {this.#ready = false; resolve();}
             else { 
                 let timeoutCtr = 0;
                 let id = setInterval(() => {
@@ -277,17 +277,17 @@ export class RetroputerInterface {
     }
     async putConsoleChar({timeout, char} = {}) {
         //console.log("hi");
-        process.stdout.write(String.fromCharCode(char));
         //return this.setIO({timeout, port: 0x81, length: 1, values: [char]});
         
         await this.waitUntilReady({timeout});
-        this._send({
+        await this._send({
             write: true,
             autoIncr: false,
             length: 1,
             addr: 0x4000_0001,
             values: [char]
         });
+        process.stdout.write(String.fromCharCode(char));
         
     }
 

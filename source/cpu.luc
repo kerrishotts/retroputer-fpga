@@ -66,10 +66,15 @@ module cpu (
       
       dff inst[4][8];      // 32-bit instruction
       dff instOpExec[8];   // Final instruction to execute (after decodes & fixups)
-      fsm state = { INIT, FETCH_1, FETCH_2, FETCH_3, FETCH_4, DECODE_1, DECODE_2, EXECUTE, NEXT, HALT, PUSH_LO, PUSH_HI, POP_HI, POP_LO };
+      fsm state = { INIT, FETCH, DECODE, EXECUTE, NOP,
+                    ALU_ARITHMETIC, TRAP, NOT_NEG, EXC, SWAP_MOV, LD_1, LD_2, LD_ST,
+                    INC_DEC_LOOP, IN, OUT, ENTER, EXIT, BRK_HALT, BR, PUSH_POP_RET, 
+                    FPU, SET, CLR, WAIT,
+                    NEXT, HALT, PUSH_LO, PUSH_HI, POP_HI, POP_LO };
       fsm pushall_regs = { PUSH_SP, PUSH_A, PUSH_B, PUSH_C, PUSH_D, PUSH_X, PUSH_Y, PUSH_BP };
       fsm popall_regs = { POP_BP, POP_Y, POP_X, POP_D, POP_C, POP_B, POP_A, POP_SP };
-      
+      dff fetch_ctr[2];     // how many bytes have we fetched for an instruction
+            
       addressing_unit calc_addr;      
       fsm addrState = { CALC, FETCH_WORD_HI, FETCH_WORD_LO, STORE_WORD_HI, STORE_WORD_LO };
       dff ld_st_addr[19];
@@ -232,45 +237,24 @@ module cpu (
           reg.d[Reg.IRQ_FLAGS] = c{8h0,8b01000000}; // Interrupts are DISABLED until the bootstrap code in ROM enables them
           reg.d[Reg.IRQ_FLAGS][4] = dbe;         // if debugger is enabled, single step by default
           state.d = state.NEXT;     // start fetching instructions (but NEXT will let us halt immediately if need be)
-  
-        state.FETCH_1:
+
+        state.FETCH:
           mapper.address = c{3b000, reg_mp};        // assert mapped address on address output
           d_read = 1b1;                             // request READ from memory
           if(d_rdy) {                               // when data is available
             reg.d[Reg.MP] = inc_reg_mp;             // ... increment MP by one (ready for next byte, if needed)
-            inst.d[0] = d_in;                       // ... set the instruction's first byte to the data
-            inst.d[1] = 0;                          // ... clear the rest
-            inst.d[2] = 0;
-            inst.d[3] = 0;
-            instLUT.opcode = d_in;                  // ... set the opcode to see if we need to read more
-            state.d = instSize != InstWidth.ONE ? state.FETCH_2 : state.DECODE_1;
+            inst.d[fetch_ctr.q] = d_in;             // ... set instruction byte to the data
+            if (fetch_ctr.q == 0) {
+              inst.d[1] = 0;                        // ... clear the rest
+              inst.d[2] = 0;
+              inst.d[3] = 0;
+              instLUT.opcode = d_in;                // ... set the opcode to see if we need to read more
+            }
+            if (instSize == fetch_ctr.q) state.d = state.DECODE; // if instruction width matches fetch, decode
+            fetch_ctr.d = fetch_ctr.q + 1;          // increment to next byte
           }
           
-        state.FETCH_2:
-          mapper.address = c{3b000, reg_mp};        // assert mapped address on address output
-          d_read = 1b1;                             // request READ from memory
-          if(d_rdy) {                               // when data is availabe
-            reg.d[Reg.MP] = inc_reg_mp;             // ... increment MP by one (ready for next byte, if needed)
-            inst.d[1] = d_in;                       // ... populate second byte of instruction
-            state.d = instSize != InstWidth.TWO ? state.FETCH_3 : state.DECODE_1;
-          }
-        state.FETCH_3:
-          mapper.address = c{3b000, reg_mp};        // read another byte from mapped memory
-          d_read = 1b1;                             // request READ from memory
-          if(d_rdy) {                               // when data is available
-            reg.d[Reg.MP] = inc_reg_mp;             // ... increment MP by one (ready for next byte, if needed)
-            inst.d[2] = d_in;                       // ... populate third byte of instruction
-            state.d = instSize != InstWidth.THREE ? state.FETCH_4 : state.DECODE_1;
-          }
-        state.FETCH_4:
-          mapper.address = c{3b000, reg_mp};        // read another byte from mapped memory
-          d_read = 1b1;                             // request READ from memory
-          if(d_rdy) {
-            reg.d[Reg.MP] = inc_reg_mp;             // ... increment MP by one (ready for next byte, if needed)
-            inst.d[3] = d_in;                       // store final instruction byte
-            state.d = state.DECODE_1;                 // no instruction is longer than four bytes; go to decoding
-          }
-        state.DECODE_1:
+        state.DECODE:
           reg.d[Reg.PC] = reg_mp;            // Move PC to match MP
           instOpExec.d = instOp;
           fixup = 1b0;                              // signal if we need a fixup -- 0 means no
@@ -305,13 +289,38 @@ module cpu (
           }
           state.d = state.EXECUTE;
         state.EXECUTE:
-          state.d = state.NEXT;
-
-          /* ALU_ARITHMETIC_1 */
+          if (instOpExec.q == Op.NOP) state.d = state.NOP;
+          if (instOpExec.q == Op.INVALID) state.d = state.NOP;
           if ((instOpExec.q >= Op.ADD_D_S && instOpExec.q <= Op.XOR_D_S) || (instOpExec.q >= Op.MUL_D_S && instOpExec.q <= Op.SMOD_D_S)
             || instOpExec.q == Op.SHL_D_S || instOpExec.q == Op.SHR_D_S
             || instOpExec.q == Op.SHL_D_IMMN || instOpExec.q == Op.SHR_D_IMMN
-            || (instOpExec.q >= Op.ADD_D_IMMW && instOpExec.q <= Op.XOR_D_IMMB)) {
+            || (instOpExec.q >= Op.ADD_D_IMMW && instOpExec.q <= Op.XOR_D_IMMB)) state.d = state.ALU_ARITHMETIC;
+          if (instOpExec.q == Op.TRAP_IMMB || instOpExec.q == Op.TRAP_S) state.d = state.TRAP;
+          if (instOpExec.q == Op.NOT_D || instOpExec.q == Op.NEG_D) state.d = state.NOT_NEG;
+          if (instOpExec.q == Op.EXC_D) state.d = state.EXC;
+          if (instOpExec.q == Op.SWAP_D_S || instOpExec.q == Op.MOV_D_S) state.d = state.SWAP_MOV;
+          if (instOpExec.q == Op.LD_D_IMMW) state.d = state.LD_1;
+          if (instOpExec.q == Op.LD_D_IMMB) state.d = state.LD_2;
+          if (instOpExec.q == Op.LD_D_ADDR || instOpExec.q == Op.ST_S_ADDR) state.d = state.LD_ST;
+          if (instOpExec.q == Op.INC_D || instOpExec.q == Op.DEC_D || instOpExec.q == Op.LOOPS_ADR || instOpExec.q == Op.LOOP_ADDR) state.d = state.INC_DEC_LOOP;
+          if (instOpExec.q == Op.IN_D_IMMB) state.d = state.IN;
+          if (instOpExec.q == Op.OUT_S_IMMB) state.d = state.OUT;
+          if (instOpExec.q == Op.ENTER_IMMB) state.d = state.ENTER;
+          if (instOpExec.q == Op.EXIT_IMMB) state.d = state.EXIT;
+          if ((instOpExec.q == Op.BRK) || instOpExec.q == Op.HALT) state.d = state.BRK_HALT;
+          if (instOpExec.q == Op.BRS_ADR || instOpExec.q == Op.BR_ADDR) state.d = state.BR;
+          if ((instOpExec.q >= Op.PUSHALL && instOpExec.q <= Op.RET) ||
+             instOpExec.q == Op.PUSH_S  || instOpExec.q == Op.POP_D) state.d = state.PUSH_POP_RET;
+          if (instOpExec.q == Op.FPU) state.d = state.FPU;
+          if (instOpExec.q == Op.SET_F) state.d = state.SET;
+          if (instOpExec.q == Op.CLR_F) state.d = state.CLR;
+          if (instOpExec.q == Op.WAIT_IMMB) state.d = state.WAIT;
+
+          
+        state.NOP:
+          state.d = state.NEXT;
+
+        state.ALU_ARITHMETIC:
             is_immediate = (instOpExec.q >= Op.ADD_D_IMMW && instOpExec.q <= Op.XOR_D_IMMB);
             is_nybble = instOpExec.q == Op.SHL_D_IMMN || instOpExec.q == Op.SHR_D_IMMN;
             
@@ -373,16 +382,11 @@ module cpu (
               if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = alu.result[7:0];
               else             /* WORD */ reg.d[destReg] = alu.result;
             }
-            reg.d[Reg.IRQ_FLAGS][3:0] = c{alu.negative, alu.carry, alu.overflow, alu.zero};              
-          }
-          
-          /* TRAP */
-          if (instOpExec.q == Op.TRAP_IMMB || instOpExec.q == Op.TRAP_S) { // TODO: implement TRAPs
-            //state.d = state.NEXT;
-          }
-          
-          /* NOT_NEG */
-          if (instOpExec.q == Op.NOT_D || instOpExec.q == Op.NEG_D) {
+            reg.d[Reg.IRQ_FLAGS][3:0] = c{alu.negative, alu.carry, alu.overflow, alu.zero};
+            state.d = state.NEXT;
+        state.TRAP:
+            state.d = state.NEXT;
+        state.NOT_NEG:  
             destReg = inst.q[1][3:1];
             destRegSize = inst.q[1][0];
             alu.size_a = destRegSize;
@@ -391,20 +395,16 @@ module cpu (
             if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = alu.result[7:0];
             else             /* WORD */ reg.d[destReg] = alu.result;
             reg.d[Reg.IRQ_FLAGS][3:0] = c{alu.negative, alu.carry, alu.overflow, alu.zero};            
-          }
-          
-          /* EXC */
-          if (instOpExec.q == Op.EXC_D) {
+            state.d = state.NEXT;
+        state.EXC:  
             destReg = inst.q[1][3:1];
             destRegSize = inst.q[1][0];
             if (destRegSize) /* BYTE */ { reg.d[destReg][7:4] = reg.q[destReg][3:0]; reg.d[destReg][3:0] = reg.q[destReg][7:4]; }
             else             /* WORD */ { reg.d[destReg][15:8]= reg.q[destReg][7:0]; reg.d[destReg][7:0] = reg.q[destReg][15:8]; }
             // NOTE: does NOT set flags (unlike emulator; not sure we actually need to, and can't see a use case)
             // TODO: EMULATOR DIFF
-          }
-          
-          /* SWAP_MOV */
-          if (instOpExec.q == Op.SWAP_D_S || instOpExec.q == Op.MOV_D_S) {
+            state.d = state.NEXT;
+        state.SWAP_MOV:  
             destReg = inst.q[1][7:5];
             destRegSize = inst.q[1][4];
             srceReg = inst.q[1][3:1];
@@ -415,23 +415,16 @@ module cpu (
               if (srceRegSize) /* BYTE */ reg.d[srceReg][7:0] = reg.q[destReg][7:0];
               else             /* WORD */ reg.d[srceReg] = destRegSize ? /* BYTE */ c{8b0, reg.q[destReg][7:0]} : reg.q[destReg];
             } 
-          }
-          
-          /* LD_1 */
-          if (instOpExec.q == Op.LD_D_IMMW) {
+            state.d = state.NEXT;
+        state.LD_1:  
             destReg = inst.q[0][3:1];
             reg.d[destReg] = c{inst.q[2], inst.q[3]};
-          }
-          
-          /* LD_2 */
-          if (instOpExec.q == Op.LD_D_IMMB) {
+            state.d = state.NEXT;
+        state.LD_2:  
             destReg = inst.q[0][3:1];
             reg.d[destReg][7:0] = inst.q[2];
-          }
-          
-          /* LD_ST */
-          if (instOpExec.q == Op.LD_D_ADDR || instOpExec.q == Op.ST_S_ADDR) {
-            state.d = state.EXECUTE; // keep us in this state (we'll move forward after we ld or st)
+            state.d = state.NEXT;
+        state.LD_ST:  
             store = instOpExec.q == Op.ST_S_ADDR; //inst.q[0][5]; // if not set, loading
 
             destReg = inst.q[0][3:1];
@@ -489,10 +482,7 @@ module cpu (
                 addrState.d = addrState.CALC;
                 state.d = state.NEXT;                     // done; continue execution
             }
-          }
-          
-          /* INC_DEC_LOOP */
-          if (instOpExec.q == Op.INC_D || instOpExec.q == Op.DEC_D || instOpExec.q == Op.LOOPS_ADR || instOpExec.q == Op.LOOP_ADDR) {
+        state.INC_DEC_LOOP:  
             destReg = inst.q[0][3:1];
             destRegSize = inst.q[0][0];
             alu.size_a = destRegSize;
@@ -511,10 +501,8 @@ module cpu (
                 reg.d[Reg.MP] = reg_mp + c{8x{inst.q[2][7]}, inst.q[2]};
               }
             }
-          }
-          
-          /* IN */
-          if (instOpExec.q == Op.IN_D_IMMB) {
+            state.d = state.NEXT;
+        state.IN:  
             destReg = inst.q[1][7:5];
             destRegSize = inst.q[1][4];
             io_read = ~io_rdy;
@@ -523,48 +511,36 @@ module cpu (
             if (io_rdy) {
               if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = io_in;
               else             /* WORD */ reg.d[destReg] = c{8h00, io_in};
-            } else state.d = state.EXECUTE; // stick around for another cycle
-          }
-          
-          /* OUT */
-          if (instOpExec.q == Op.OUT_S_IMMB) {
+              state.d = state.NEXT;
+            }
+        state.OUT:
             srceReg = inst.q[1][7:5];
             srceRegSize = inst.q[1][4];
             io_out = reg.q[srceReg][7:0];
             io_write = 1;
             port = inst.q[2];
-          }
-          
-          /* ENTER */
-          if (instOpExec.q == Op.ENTER_IMMB) {
+            state.d = state.NEXT;
+        state.ENTER:  
             target_reg.d = Reg.BP;
             target_reg_size.d = AluSize.WORD;
-            next_state.d = state.EXECUTE;
+            next_state.d = state.ENTER;
             state.d = is_step_2.q ? state.NEXT : state.PUSH_LO;
             is_step_2.d = ~is_step_2.q;
             if (is_step_2.q) {
               reg.d[Reg.BP] = reg_sp;
               reg.d[Reg.SP] = reg_sp - c{8b0, inst.q[1]};
             }
-          }
-          
-          /* EXIT */
-          if (instOpExec.q == Op.EXIT_IMMB) {
+        state.EXIT:  
             reg.d[Reg.SP] = reg.q[Reg.SP] + c{8b0, inst.q[1]};
             target_reg.d = Reg.BP;
             target_reg_size.d = AluSize.WORD;
             next_state.d = state.NEXT;
             state.d = state.POP_HI;
-          }
-              
-          /* BRK_HALT */
-          if ((instOpExec.q == Op.BRK && dbe) || instOpExec.q == Op.HALT)
+        state.BRK_HALT:
+            state.d = state.NEXT;
+            if ((instOpExec.q == Op.BRK && dbe) || instOpExec.q == Op.HALT)
               state.d = state.HALT;
-          
-          /* BR */
-          if (instOpExec.q == Op.BRS_ADR || instOpExec.q == Op.BR_ADDR) {
-            state.d = state.EXECUTE; // keep us in this state (we'll move forward after we ld or st)
-
+        state.BR: 
             addr_mm = inst.q[1][7:6];
             addr_i = inst.q[1][5];
             addr_x = inst.q[1][4];
@@ -620,11 +596,7 @@ module cpu (
               } else                                   // BR -- don't push anything, go on w/ execution
                 state.d = state.NEXT; 
             }
-          }
-          
-          /* PUSH_POP_RET */
-          if ((instOpExec.q >= Op.PUSHALL && instOpExec.q <= Op.RET) ||
-              instOpExec.q == Op.PUSH_S  || instOpExec.q == Op.POP_D) {
+        state.PUSH_POP_RET:
             is_target_var = instOpExec.q == Op.PUSH_S  || instOpExec.q == Op.POP_D;
             is_push = is_target_var ? ~inst.q[0][4] : ~inst.q[0][0];
             //if (instOpExec.q == Op.RET) is_push = 0;
@@ -639,7 +611,7 @@ module cpu (
               target_reg_size.d = AluSize.WORD;
               case (inst.q[0][2:0]) {
                 3b000: // pushall
-                  next_state.d = pushall_regs.q == pushall_regs.PUSH_BP ? state.EXECUTE : state.NEXT;
+                  next_state.d = pushall_regs.q == pushall_regs.PUSH_BP ? state.PUSH_POP_RET : state.NEXT;
                   pushall_regs.d = pushall_regs.q + 1;
                   case (pushall_regs.q) {
                     pushall_regs.PUSH_SP: target_reg.d = Reg.SP;
@@ -652,7 +624,7 @@ module cpu (
                     pushall_regs.PUSH_BP: target_reg.d = Reg.BP; pushall_regs.d = pushall_regs.PUSH_SP;
                   }
                 3b001: // popall
-                  next_state.d = popall_regs.q == popall_regs.POP_SP ? state.EXECUTE : state.NEXT;
+                  next_state.d = popall_regs.q == popall_regs.POP_SP ? state.PUSH_POP_RET : state.NEXT;
                   popall_regs.d = popall_regs.q + 1;
                   case (popall_regs.q) {
                     popall_regs.POP_SP: target_reg.d = Reg.SP; popall_regs.d = popall_regs.POP_BP;
@@ -671,32 +643,23 @@ module cpu (
                 3b111: /* ret */   target_reg.d = Reg.MP;
               }
             }
-          }
-          
-          /* FPU */
-          if (instOpExec.q == Op.FPU) {
-          }
-          
-          /* SET */
-          if (instOpExec.q == Op.SET_F) {
+        state.FPU:
+            state.d = state.NEXT;
+        state.SET:  
             decode_flags.in = inst.q[0][2:0];
-            reg.d[Reg.IRQ_FLAGS][7:0] = reg.q[Reg.IRQ_FLAGS] | decode_flags.out;           
-          }
-          
-          /* CLR */
-          if (instOpExec.q == Op.CLR_F) {
+            reg.d[Reg.IRQ_FLAGS][7:0] = reg.q[Reg.IRQ_FLAGS] | decode_flags.out;
+            state.d = state.NEXT;
+        state.CLR:
             decode_flags.in = inst.q[0][2:0];
             reg.d[Reg.IRQ_FLAGS][7:0] = reg.q[Reg.IRQ_FLAGS] & ~decode_flags.out;           
-          }
-
-          /* WAIT */
-          if (instOpExec.q == Op.WAIT_IMMB) {
-          }
+            state.d = state.NEXT;
+        state.WAIT:
+            state.d = state.NEXT;
           
           
         state.NEXT: 
           // TODO: handle IRQs
-          state.d = state.FETCH_1;                  // when done, go back to fetch the next instruction
+          state.d = state.FETCH;                    // when done, go back to fetch the next instruction
           if (dbe & flg_ss) {                       // unless debugger is attached and single step enabled
             state.d = state.HALT;                   // ... in which case, halt
           }
@@ -706,9 +669,11 @@ module cpu (
           cpu_clocks.d = 0;
           inst_clocks.d = 0;
           
+          fetch_ctr.d = 0;
+          
         state.HALT:
           if (irq_service & nmi) {                  // wait until trap asserted, IRQ has high bit, so NMI
-            state.d = state.FETCH_1;                // ... continue execution
+            state.d = state.FETCH;                  // ... continue execution
             cpu_clocks.d = 0;
             inst_clocks.d = 0;
           }
