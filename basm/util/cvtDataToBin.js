@@ -16,25 +16,29 @@ export default function cvtDataToBin(data, addr, format = "bin", newline, jspref
     }
     let text = data.reduce((p, c, idx) => {
         if (idx % 16 === 0) {
-            if (format === "bin") {
+            if (format === "hex") {
                 p.push(`${hexUtils.toHex(addr + idx, "00000", "")}:`);
-            } else {
+            } else if (format === "js") {
                 p.push(` /*${hexUtils.toHex(addr + idx, "00000", "")}*/ `);
+            } else {
+                p.push("");
             }
         }
-        if (format === "bin") {
+        if (format === "hex") {
             p[p.length - 1] += `${((idx % 8 === 0) && (idx % 16 !== 0)) ? " -" : ""} ${hexUtils.toHex2(c, "")}`;
-        } else {
+        } else if (format === "js") {
             p[p.length - 1] += `${hexUtils.toHex2(c, "0x")},`;
+        } else {
+            p[p.length - 1] += `${hexUtils.toHex2(c, "")} `;
         }
         return p;
     }, []);
 
-    if (format !== "bin") {
+    if (format === "js") {
         text.unshift(`${jsprefix}{addr: ${addr}, data: [`);
         text.push(`]}${jspostfix}`)
     }
-    text = text.join(newline);
+    text = text.map(line => line.trim()).join(newline);
 
     return text;
 }

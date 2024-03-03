@@ -11,6 +11,7 @@ import { parser } from "./parser.js";
 import { assemble, setImportProvider } from "./assemble.js";
 import { nodeImportProvider } from "./importProviders/node.js";
 import cvtDataToBin from "./util/cvtDataToBin.js";
+import hexUtils from "./util/hexUtils.js";
 
 setImportProvider(nodeImportProvider);
 
@@ -46,15 +47,15 @@ function write(segments, { format = "js", newline, exports } = {}) {
     if (!newline) {
         newline = String.fromCharCode(13) + String.fromCharCode(10);
     }
-    let text = (format !== "hex") ? "export default [" : "";
+    let text = (format === "js") ? "export default [" : "";
     for (let segment of segments) {
         const addr = segment.addr;
-        text += cvtDataToBin(segment.data, Number(addr), format, newline, "", "") + (format !== "hex" ? "," : "") + newline;
+        text += cvtDataToBin(segment.data, Number(addr), format, newline, "", "") + (format === "js" ? "," : " ") + newline;
     }
-    if (format !== "hex") {
+    if (format === "js") {
         text += "];";
     }
-    if (format !== "hex") {
+    if (format === "js") {
         if (exports) {
             text += writeExports({segments, exports, newline});
             /*const segmentsToExport = exports.split(",");
@@ -74,7 +75,7 @@ cli.enable("status");
 const options = cli.parse({
         source: [ "i", "Source file", "string", undefined],
         output: [ "o", "Output file", "string", undefined],
-        format: [ "f", "Output format (js, hex, or bin)", "string", "js"],
+        format: [ "f", "Output format (js, hex, bin, mem)", "string", "js"],
         basepath: [ "d", "Base directory (for imports)", "string", process.cwd()],
         exports: [ "x", "Export symbols in segments", "string", ""],
         start: [ "a", "Start Address", "string", "0x00000"],
@@ -139,7 +140,20 @@ cli.withInput(...([sourceFile, "utf8", (line, newline, eof) => {
                         cli.output(`Wrote exports to ${outputFile}`);
                     }
                 }
-
+            } else if (cli.options.format === "mem") {
+                const output = writeBinary(segments, {start: Number(cli.options.start), end: Number(cli.options.end) });
+                process.chdir(originalCWD);
+                const outputFile = path.resolve(options.output);
+                const outputText = output.reduce((out, byte, idx) => {
+                    out += hexUtils.toHex2(byte, "");
+                    if (idx % 8 === 7)
+                      out += "\n";
+                    else
+                      out += " ";
+                    return out;
+                }, "")
+                fs.writeFileSync(outputFile, outputText);
+                cli.info(`Wrote ${output.length} bytes to ${outputFile}.`);
             } else {
                 const outputText = write(segments, {format: cli.options.format, newline, exports: cli.options.exports});
                 if (!options.output) {

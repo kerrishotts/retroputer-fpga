@@ -7,7 +7,10 @@
         "build:basic:stmts": "node kernel/basic/tokens.js stmt > kernel/basic/stmt-tokens.asm",
         "build:basic:exprs": "node kernel/basic/tokens.js expr > kernel/basic/expr-tokens.asm",
         "build:basic": "npm run build:basic:tokens && npm run build:basic:stmts && npm run build:basic:exprs",
-        "build:kernel": "npm run build:basic && ../basm/index.js -d kernel -x vectors,kdata,krodata -i kernel/kernel.asm -o roms/kernel.js",
-        "build:kernel:bin": "npm run build:basic && ../basm/index.js -d kernel -x vectors,kdata,krodata -i kernel/kernel.asm -f bin -a 0x70000 -z 0x7FFFF -o roms/kernel.bin"
+        "build:kernel:js": "npm run build:basic && ../basm/index.js -d kernel -x vectors,kdata,krodata -i kernel/kernel.asm -o roms/kernel.js",
+        "build:kernel:mem": "npm run build:basic && ../basm/index.js -d kernel -x vectors,kdata,krodata -i kernel/kernel.asm -f mem -o roms/kernel.mem -a 0x70000 -z 0x7FFFF",
+        "build:kernel:hex": "npm run build:basic && ../basm/index.js -d kernel -x vectors,kdata,krodata -i kernel/kernel.asm -f hex -o roms/kernel.hex",
+        "build:kernel:bin": "npm run build:basic && ../basm/index.js -d kernel -x vectors,kdata,krodata -i kernel/kernel.asm -f bin -a 0x70000 -z 0x7FFFF -o roms/kernel.bin",
+        "build:kernel": "npm run build:kernel:js && npm run build:kernel:mem && npm run build:kernel:hex && npm run build:kernel:bin"
     }
 }
