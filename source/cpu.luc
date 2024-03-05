@@ -62,6 +62,7 @@ module cpu (
 
   .clk(clk) {
     .rst(rst) {
+      alu alu;   
       dff reg[12][16];     // 12 16-bit registers (alternatively 24 8-bit registers)
       
       dff inst[4][8];      // 32-bit instruction
@@ -92,7 +93,6 @@ module cpu (
       
     }  
   }
-  alu alu;   
   instLUT instLUT; 
   memory_mapper mapper;
   
@@ -172,6 +172,7 @@ module cpu (
     alu.carry_in = 1bx;
     alu.a = 16bx;
     alu.b = 16bx;
+    alu.i_en = 0;
     
     dbg_reg = reg.q;
     dbg_inst = c{inst.q[0], inst.q[1], inst.q[2], inst.q[3]};
@@ -321,12 +322,22 @@ module cpu (
           state.d = state.NEXT;
 
         state.ALU_ARITHMETIC:
-            is_immediate = (instOpExec.q >= Op.ADD_D_IMMW && instOpExec.q <= Op.XOR_D_IMMB);
-            is_nybble = instOpExec.q == Op.SHL_D_IMMN || instOpExec.q == Op.SHR_D_IMMN;
-            
-            destReg = is_immediate ? c{1b0, inst.q[0][2:1]} : inst.q[1][7:5];
-            destRegSize = is_immediate ? inst.q[0][0] : inst.q[1][4];
+          is_immediate = (instOpExec.q >= Op.ADD_D_IMMW && instOpExec.q <= Op.XOR_D_IMMB);
+          is_nybble = instOpExec.q == Op.SHL_D_IMMN || instOpExec.q == Op.SHR_D_IMMN;
+          
+          destReg = is_immediate ? c{1b0, inst.q[0][2:1]} : inst.q[1][7:5];
+          destRegSize = is_immediate ? inst.q[0][0] : inst.q[1][4];
+          skip = 0; // if skip isn't set, we'll store the result of aluOp back in dest
+          case (instOpExec.q) {
+            Op.CMP_D_IMMB:  skip = 1;
+            Op.CMP_D_IMMW:  skip = 1;
+            Op.CMP_D_S:     skip = 1;
+            Op.TEST_D_IMMB: skip = 1;
+            Op.TEST_D_IMMW: skip = 1;
+            Op.TEST_D_S:    skip = 1;
+          }
 
+          if (alu.o_rdy) {
             srceReg = inst.q[1][3:1];
             srceRegSize = is_immediate ? destRegSize : inst.q[1][0]; // shouldn't matter for SHL/SHR
             
@@ -337,7 +348,6 @@ module cpu (
             if (is_immediate) alu.b = srceRegSize ? /* BYTE */ c{8b0, inst.q[1]} : c{inst.q[1], inst.q[2]};
             if (is_nybble) alu.b = c{12b0, inst.q[1][3:0]};
             alu.carry_in = flg_c; //reg.q[Reg.IRQ_FLAGS][2];
-            skip = 0; // if skip isn't set, we'll store the result of aluOp back in dest
             alu.size_r = destRegSize;
             
             alu.op = AluOps.NOP;
@@ -365,45 +375,45 @@ module cpu (
             if (is_nybble) {
               alu.op = AluOps.SHL;
               if (instOpExec.q == Op.SHR_D_IMMN) alu.op = AluOps.SHR;
-            }
-            
-            case (instOpExec.q) {
-              Op.CMP_D_IMMB:  skip = 1;
-              Op.CMP_D_IMMW:  skip = 1;
-              Op.CMP_D_S:     skip = 1;
-              Op.TEST_D_IMMB: skip = 1;
-              Op.TEST_D_IMMW: skip = 1;
-              Op.TEST_D_S:    skip = 1;
-            }
+            }            
             
             if (skip) alu.carry_in = 0;
-            
+            alu.i_en = 1;
+          }
+          if (alu.o_valid) {            
             if (!skip) {
               if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = alu.result[7:0];
               else             /* WORD */ reg.d[destReg] = alu.result;
             }
             reg.d[Reg.IRQ_FLAGS][3:0] = c{alu.negative, alu.carry, alu.overflow, alu.zero};
             state.d = state.NEXT;
+          }
         state.TRAP:
             state.d = state.NEXT;
         state.NOT_NEG:  
-            destReg = inst.q[1][3:1];
-            destRegSize = inst.q[1][0];
+          destReg = inst.q[1][3:1];
+          destRegSize = inst.q[1][0];
+          if (alu.o_rdy) {
             alu.size_a = destRegSize;
             alu.a = destRegSize ? /* BYTE */ reg.q[destReg][7:0] : reg.q[destReg];
             alu.op = (inst.q[1][4]) ? AluOps.NEG : AluOps.NOT;
+            alu.i_en = 1;
+          }
+          if (alu.o_valid) {
             if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = alu.result[7:0];
             else             /* WORD */ reg.d[destReg] = alu.result;
             reg.d[Reg.IRQ_FLAGS][3:0] = c{alu.negative, alu.carry, alu.overflow, alu.zero};            
             state.d = state.NEXT;
+          }
         state.EXC:  
-            destReg = inst.q[1][3:1];
-            destRegSize = inst.q[1][0];
-            if (destRegSize) /* BYTE */ { reg.d[destReg][7:4] = reg.q[destReg][3:0]; reg.d[destReg][3:0] = reg.q[destReg][7:4]; }
-            else             /* WORD */ { reg.d[destReg][15:8]= reg.q[destReg][7:0]; reg.d[destReg][7:0] = reg.q[destReg][15:8]; }
+          destReg = inst.q[1][3:1];
+          destRegSize = inst.q[1][0];
+          
+          if (destRegSize) /* BYTE */ { reg.d[destReg][7:4] = reg.q[destReg][3:0]; reg.d[destReg][3:0] = reg.q[destReg][7:4]; }
+          else             /* WORD */ { reg.d[destReg][15:8]= reg.q[destReg][7:0]; reg.d[destReg][7:0] = reg.q[destReg][15:8]; }
             // NOTE: does NOT set flags (unlike emulator; not sure we actually need to, and can't see a use case)
             // TODO: EMULATOR DIFF
-            state.d = state.NEXT;
+          state.d = state.NEXT;
         state.SWAP_MOV:  
             destReg = inst.q[1][7:5];
             destRegSize = inst.q[1][4];
@@ -483,11 +493,15 @@ module cpu (
                 state.d = state.NEXT;                     // done; continue execution
             }
         state.INC_DEC_LOOP:  
-            destReg = inst.q[0][3:1];
-            destRegSize = inst.q[0][0];
+          destReg = inst.q[0][3:1];
+          destRegSize = inst.q[0][0];
+          if (alu.o_rdy) {
             alu.size_a = destRegSize;
             alu.a = destRegSize ? /* BYTE */ c{8h00, reg.q[destReg][7:0]} : /* WORD */ reg.q[destReg];
             alu.op = (instOpExec.q == Op.INC_D) ? AluOps.INC : AluOps.DEC;
+            alu.i_en = 1;
+          }
+          if (alu.o_valid) {
             reg.d[Reg.IRQ_FLAGS][3:0] = c{alu.negative, alu.carry, alu.overflow, alu.zero};
             if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = alu.result[7:0];
             else             /* WORD */ reg.d[destReg] = alu.result;
@@ -502,6 +516,7 @@ module cpu (
               }
             }
             state.d = state.NEXT;
+          }
         state.IN:  
             destReg = inst.q[1][7:5];
             destRegSize = inst.q[1][4];

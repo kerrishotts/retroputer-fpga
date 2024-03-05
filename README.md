@@ -8,6 +8,10 @@ The project also assumes the Alchitry Io board is also present so that you can i
 
 Note: It's SUPER EARLY DAYS... nothing here is terribly useful. I'm also just learning about FPGAs, so I wouldn't take anything you see in this repo as the "right way" to do anything! This is purely for my own personal fun and enjoyment.
 
+## Acknowledgements
+
+* Uses the divider from robin, a SoC design for the IceBreaker board. Copyright 2019,2020 Michel Anders. Apache 2 license. Original: https://github.com/varkenvarken/robin/blob/master/SoC/divider.v
+
 ## Done
 
 - [X] Show register on Io board

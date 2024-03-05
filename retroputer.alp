@@ -16,6 +16,7 @@
     <src>device_timers.luc</src>
     <src>instLUT.luc</src>
     <component>simple_dual_ram.v</component>
+    <src>divider.v</src>
     <src>cpu.luc</src>
     <component>decoder.luc</component>
     <src>memory_mapper.luc</src>

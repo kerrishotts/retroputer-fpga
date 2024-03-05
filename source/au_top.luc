@@ -34,6 +34,7 @@ module au_top (
   
   sig dbe;                  // debugger attached
   sig hideROM;              // if 1, ROM addresses read from RAM
+  sig real_serial;          // if 1, don't present a register interface.
   
   clk_wiz_0 clk_wiz;
 
@@ -83,6 +84,7 @@ module au_top (
   always {
     dbe = io_dip[0][0];
     hideROM = io_dip[0][7];
+    real_serial = io_dip[0][6];
 
     /* Clock Wizard Connections */
     clk_wiz.clk_in1 = clk; // 100MHz in
@@ -142,6 +144,7 @@ module au_top (
     // connect USB serial to the serial device
     serial.usb_rx = usb_rx;
     usb_tx = serial.usb_tx;
+    serial.i_real_serial = real_serial;
 
     // serial device wants access to memory
     mem_arbiter.device_in[0] = serial.mem_in;

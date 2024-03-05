@@ -24,7 +24,9 @@ module device_serial #(
     input dbg_clocks[32],
     
     output nmi,
-    output wrote_to_memory
+    output wrote_to_memory,
+    
+    input i_real_serial                 // if 1, use usb_rx/usb_tx as a real serial terminal
   ) {
 
   .clk(clk), .rst(rst) {
@@ -85,11 +87,19 @@ module device_serial #(
     usb_tx = uart_tx.tx;
     uart_rx.rx = usb_rx;
     uart_tx.block = 0;
-    uart_tx.new_data = reg_interface.new_tx_data;
-    uart_tx.data = reg_interface.tx_data;
-    reg_interface.tx_busy = uart_tx.busy;
-    reg_interface.new_rx_data = uart_rx.new_data;
-    reg_interface.rx_data = uart_rx.data;
+    if(!i_real_serial) {
+      uart_tx.new_data = reg_interface.new_tx_data;
+      uart_tx.data = reg_interface.tx_data;
+      reg_interface.tx_busy = uart_tx.busy;
+      reg_interface.new_rx_data = uart_rx.new_data;
+      reg_interface.rx_data = uart_rx.data;
+    } else {
+      uart_tx.new_data = 0;
+      uart_tx.data = 8bx;
+      reg_interface.tx_busy = 1;
+      reg_interface.new_rx_data = 0;
+      reg_interface.rx_data = 0;
+    }
     reg_interface.regIn.drdy = 0;
     reg_interface.regIn.data = 32bx;
    
@@ -178,8 +188,23 @@ module device_serial #(
     
     wrote_to_memory = 0;
     
+    if (i_real_serial) {
+      if (uart_rx.new_data) {
+        if (!fifo_console_in.full) {
+          fifo_console_in.din = uart_rx.data;
+          fifo_console_in.wput = 1;
+          irq_service.d = 1;
+        }
+        if (!fifo_console_out.empty && !uart_tx.busy) {
+          uart_tx.data = fifo_console_out.dout;
+          uart_tx.new_data = 1;
+          fifo_console_out.rget = 1; // advance to next character, if any
+        }
+      }
+    }
+    
     /* handle register interface commands */
-    if (reg_interface.regOut.new_cmd) {
+    if (reg_interface.regOut.new_cmd && !i_real_serial) {
       serial_bank = reg_interface.regOut.address[31:30];
       if (reg_interface.regOut.write) {
         // WRITING to the device

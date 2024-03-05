@@ -25,8 +25,8 @@ global AluSize {
 }
 
 module alu (
-    //input clk,  // clock
-    //input rst,  // reset
+    input clk,  // clock
+    input rst,  // reset
     //output out
     input a[16],               // operand A
     input b[16],               // operand b 
@@ -39,65 +39,160 @@ module alu (
     output negative[1],        // negative flag
     output overflow[1],        // overflow flag
     input size_r[1],           // expected size of result (8 or 16 bits)
-    output result[16]          // result of operation
+    output result[16],         // result of operation
+    input i_en,                // if 1, latch the input & execute
+    output o_valid,            // result is valid (for multi-clock ops, this is 0 until complete)
+    output o_rdy               // if 1, alu is ready for an operation
   ) {
   
-  sig sign_a[1];
-  sig sign_b[1];
+//  sig sign_a[1];
+//  sig sign_b[1];
   sig internal_negative[1];
-  sig internal_result[17];
+//  sig internal_result[17];
+  .clk(clk), .rst(rst) {
+    fsm state = { READY, EVAL, COMPLETE };
+    dff ctr[2];
+    dff internal_pipeline_result[17];
+    
+    dff latch_a[16];
+    dff latch_size_a[1];
+    dff latch_b[16];
+    dff latch_size_b[1];
+    dff latch_op[5];
+    dff latch_carry_in[1];
+    dff latch_size_r[1];
+    
+    
+    dff internal_result[17];
+//    dff internal_negative[1];
+    dff sign_a;
+    dff sign_b;
+  }
+  
+  .clk(clk), .reset(rst) {
+    divider divider;
+  }
 
   always {
+  
+    o_valid = state.q == state.COMPLETE;
+    o_rdy = state.q == state.READY;
     
-    sign_a = a[size_a ? /* BYTE */ 7 : /* WORD */ 15];
-    sign_b = b[size_b ? /* BYTE */ 7 : /* WORD */ 15];
+    result = 16bx;
+    zero = 1bx;
+    carry = 1bx;
+    negative = 1bx;
+    overflow = 1bx;
     
-    case (op) {
-      AluOps.INC:
-        internal_result = a + 1;
-      AluOps.DEC:
-        internal_result = a - 1;
-      AluOps.ADD:
-        internal_result = a + b + c{16b0, carry_in};
-      AluOps.SUB:
-        internal_result = a - b + c{16b0, carry_in};
-      //AluOps.MUL:
-      //  internal_result = a * b;
-      //AluOps.DIV:
-      //  internal_result = a / b;
-      AluOps.AND:
-        internal_result = a & b;
-      AluOps.OR:
-        internal_result = a | b;
-      AluOps.XOR:
-        internal_result = a ^ b;
-      AluOps.NOT:
-        internal_result = ~a;
-      AluOps.NEG:
-        internal_result = -a;
-      AluOps.SHL:
-        internal_result = a << (b & 8h3F);
-      AluOps.SHR:
-        internal_result = a >> (b & 8h3F);
-      // TODO: MOD, SMUL, SDIV, SMOD
-      default:
-        internal_result = 17h000;
+    divider.go = 0;
+    divider.remainder = 1bx;
+    divider.a = 32bx;
+    divider.b = 32bx;
+    divider.divs = 1bx;
+    
+    case (state.q) {
+      state.READY:
+        if (i_en) {
+          latch_a.d = a;
+          latch_b.d = b;
+          latch_size_a.d = size_a;
+          latch_size_b.d = size_b;
+          latch_op.d = op;
+          latch_carry_in.d = carry_in;
+          latch_size_r.d = size_r;
+          state.d = state.EVAL;
+        }
+      state.EVAL:
+        state.d = state.COMPLETE;
+        sign_a.d = latch_a.q[latch_size_a.q ? /* BYTE */ 7 : /* WORD */ 15];
+        sign_b.d = latch_b.q[latch_size_b.q ? /* BYTE */ 7 : /* WORD */ 15];
+        
+        case (latch_op.q) {
+          AluOps.INC:
+            internal_result.d = latch_a.q + 1;
+          AluOps.DEC:
+            internal_result.d = latch_a.q - 1;
+          AluOps.ADD:
+            internal_result.d = latch_a.q + latch_b.q + c{16b0, latch_carry_in.q};
+          AluOps.SUB:
+            internal_result.d = latch_a.q - latch_b.q + c{16b0, latch_carry_in.q};
+          AluOps.MUL:
+            case (ctr.q) {
+              0:
+                state.d = state.EVAL;
+                internal_pipeline_result.d = latch_a.q * latch_b.q;
+                ctr.d = 1;
+              1:
+                internal_result.d = internal_pipeline_result.q;
+                ctr.d = 0;
+            }
+          AluOps.DIV:
+            divider.divs = 0;
+            divider.remainder = 0;
+            case (ctr.q) {
+              0:
+                state.d = state.EVAL;
+                ctr.d = 1;
+                divider.a = latch_a.q;
+                divider.b = latch_b.q;
+                divider.go = 1;
+              1:
+                if (divider.available) {
+                  internal_result.d = divider.c[15:0];
+                  ctr.d = 0;
+                } else state.d = state.EVAL;
+            }
+          AluOps.AND:
+            internal_result.d = latch_a.q & latch_b.q;
+          AluOps.OR:
+            internal_result.d = latch_a.q | latch_b.q;
+          AluOps.XOR:
+            internal_result.d = latch_a.q ^ latch_b.q;
+          AluOps.NOT:
+            internal_result.d = ~latch_a.q;
+          AluOps.NEG:
+            internal_result.d = -latch_a.q;
+          AluOps.SHL:
+            internal_result.d = latch_a.q << (latch_b.q & 8h3F);
+          AluOps.SHR:
+            internal_result.d = latch_a.q >> (latch_b.q & 8h3F);
+          AluOps.MOD:
+            divider.divs = 0;
+            divider.remainder = 1;
+            case (ctr.q) {
+              0:
+                state.d = state.EVAL;
+                ctr.d = 1;
+                divider.a = latch_a.q;
+                divider.b = latch_b.q;
+                divider.go = 1;
+              1:
+                if (divider.available) {
+                  internal_result.d = divider.c[15:0];
+                  ctr.d = 0;
+                } else state.d = state.EVAL;
+            }
+          // TODO: MOD, SMUL, SDIV, SMOD
+          default:
+            internal_result.d = 17h000;
+        }
+      state.COMPLETE:
+        zero = internal_result.q[15:0] == 0;
+        internal_negative = internal_result.q[15];
+        negative = internal_negative;
+        carry = latch_size_r.q ? /* BYTE */ |internal_result.q[16:8] : /* WORD */ internal_result.q[16];
+        
+        if ((latch_op.q == AluOps.ADD || latch_op.q == AluOps.MUL) && sign_a.q == sign_b.q) {
+          overflow = sign_a.q != internal_negative ? 1 : 0;
+        } else if (latch_op.q == AluOps.SUB && sign_a.q != sign_b.q) {
+          overflow = sign_a.q != internal_negative ? 1 : 0;
+        } else {
+          overflow = 0;
+        }
+        
+        result = internal_result.q[15:0];
+        
+        state.d = state.READY;      
     }
-    
-    zero = internal_result[15:0] == 0;
-    internal_negative = internal_result[15];
-    negative = internal_negative;
-    carry = size_r ? /* BYTE */ |internal_result[16:8] : /* WORD */ internal_result[16];
-    
-    if ((op == AluOps.ADD || op == AluOps.MUL) && sign_a == sign_b) {
-      overflow = sign_a != internal_negative ? 1 : 0;
-    } else if (op == AluOps.SUB && sign_a != sign_b) {
-      overflow = sign_a != internal_negative ? 1 : 0;
-    } else {
-      overflow = 0;
-    }
-    
-    result = internal_result[15:0];    
-    
   }
 }

@@ -19,9 +19,10 @@ module system_ram(
   ) {
 
   .clk(clk), .rst(rst) {
-    fsm state = { IDLE, WRITE_CMD, READ_CMD, READ_WAIT };
+    fsm state = { IDLE, WRITE_CMD, READ_CMD, READ_WAIT, READ_VALID };
     dff addr[28];
     dff orig_rd_addr[19];
+    dff read_data[8];
   }
   
   sig word[16];
@@ -39,9 +40,8 @@ module system_ram(
     wr_ready = state.q == state.IDLE;
     rd_ready = state.q == state.IDLE;
     
-    word = mem_out.rd_data[ orig_rd_addr.q[2:0]*16 +:16 ];
-    rd_data = word[15:8];
-    rd_data_valid = mem_out.rd_valid;
+    rd_data = 8bx; // word[15:8];
+    rd_data_valid = 0; // mem_out.rd_valid;
     
     case (state.q) {
       state.IDLE: 
@@ -67,7 +67,14 @@ module system_ram(
         if (mem_out.rdy) 
           state.d = state.READ_WAIT;
       state.READ_WAIT: 
-        if (mem_out.rd_valid)
-          state.d = state.IDLE;
+        if (mem_out.rd_valid) {
+          word = mem_out.rd_data[ orig_rd_addr.q[2:0]*16 +:16 ];
+          read_data.d = word[15:8];
+          state.d = state.READ_VALID;
+        }
+      state.READ_VALID:
+        state.d = state.IDLE;
+        rd_data = read_data.q;
+        rd_data_valid = 1;
   }
 }
