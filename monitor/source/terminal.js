@@ -13,14 +13,16 @@ export async function terminal(port) {
 
     let breakPressed = false;
 
+    let pendingKeyStrokes = [];
+
     process.stdin.on("keypress", async (str, key) => {
         if (key.sequence === "\u0003") {
             process.exit();
         }
         else {
-            await retroputer.putConsoleChar({char: key.sequence.charCodeAt(0)});
+            pendingKeyStrokes.push(key.sequence.charCodeAt(0));
         }
-    })
+    });
 
     setInterval(async () => {
         const terminalData = await retroputer.getConsoleChars(); // keeps reading until we get a NULL terminated string
@@ -30,6 +32,9 @@ export async function terminal(port) {
 			if (byte >= 32) process.stdout.write(String.fromCharCode(byte))
 		});
 
-
+        if (pendingKeyStrokes.length > 0) {
+            const char = pendingKeyStrokes.shift();
+            await retroputer.putConsoleChar({char});
+        }
     }, 16);
 }
