@@ -96,7 +96,7 @@ module device_serial #(
     } else {
       uart_tx.new_data = 0;
       uart_tx.data = 8bx;
-      reg_interface.tx_busy = 1;
+      reg_interface.tx_busy = uart_tx.busy;
       reg_interface.new_rx_data = 0;
       reg_interface.rx_data = 0;
     }
@@ -195,11 +195,11 @@ module device_serial #(
           fifo_console_in.wput = 1;
           irq_service.d = 1;
         }
-        if (!fifo_console_out.empty && !uart_tx.busy) {
-          uart_tx.data = fifo_console_out.dout;
-          uart_tx.new_data = 1;
-          fifo_console_out.rget = 1; // advance to next character, if any
-        }
+      }
+      if (!fifo_console_out.empty && !uart_tx.busy) {
+        uart_tx.data = fifo_console_out.dout;
+        uart_tx.new_data = 1;
+        fifo_console_out.rget = 1; // advance to next character, if any
       }
     }
     
