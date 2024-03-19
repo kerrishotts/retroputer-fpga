@@ -146,10 +146,10 @@ cli.withInput(...([sourceFile, "utf8", (line, newline, eof) => {
                 const outputFile = path.resolve(options.output);
                 const outputText = output.reduce((out, byte, idx) => {
                     out += hexUtils.toHex2(byte, "");
-                    if (idx % 8 === 7)
+                    //if (idx % 8 === 7)
                       out += "\n";
-                    else
-                      out += " ";
+                    //else
+                    //  out += " ";
                     return out;
                 }, "")
                 fs.writeFileSync(outputFile, outputText);
