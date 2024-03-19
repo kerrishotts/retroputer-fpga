@@ -1,0 +1,219 @@
+# Setup
+
+> Note: The following assumes that palette entries are stored in block RAM.
+
+## CPU Time
+
+Our CPU is running at 81.25 MHZ. How many *ns* is that per CPU clock?
+
+    ns_per_MHz = 1000 ns
+    cpu_MHz = 81.25 MHz
+    ns_per_cpu_clock = ns_per_MHz / cpu_MHz => 12.31 ns/MHz
+
+## VGA Time
+
+    pixel_clock = 25.175 MHz
+    ns_per_pixel_clock = ns_per_MHz / pixel_clock => 39.72 ns/MHz
+    
+    vga_total_width = 800
+    vga_width = 640
+    vga_invisible_width = vga_total_width - vga_width => 160
+    
+    vga_total_height = 525
+    vga_height = 480
+    vga_invisible_height = vga_total_height - vga_height => 45
+    ns_per_line = ns_per_pixel_clock * vga_total_width => 31,777.56 ns/MHz
+    
+    vga_total_visible_pixels = vga_width * vga_height => 307,200
+    ns_per_frame = ns_per_line * vga_total_height => 16,683,217.48 ns/MHz
+    ns_per_30fps = ns_per_frame * 2 => 33,366,434.96 ns/MHz
+
+VGA expects a new pixel roughly every 40ns. To be clear, this isn't *always* a new read from memory, but this is the case while the video generator is processing visible pixels (e.g., not on the porch or blanking intervals). To make the math easy and give us some wiggle roon, let's just assume that we're always reading from memory for each pixel.
+
+## Memory read access time
+
+    read_byte_clocks = 18
+    read_byte_time = read_byte_clocks * ns_per_cpu_clock => 221.54 ns/MHz
+     
+For the DDR3 memory, it seems that, on average, it takes ~222ns to read a line of memory. A line of memory is 16 bytes or 8 words. We're currently storing 8 bytes per line.
+
+## Retroputer Text Mode
+
+Retroputer's text layer memory layout is as follows (by default):
+- `base + 0x0000` stores the individual characters
+- `base + 0x1000` stores the foreground color
+- `base + 0x2000` stores the background color
+- `tile + char*64` stores the corresponding character (64 bytes)
+
+There are two text modes: one with 32x24 (although this can be effectively 32x21 w/ extra line spacing), and 64x48 (effectively 64x42 with extra spacing).
+
+### 32x21(9 high) layer
+
+    cols_32_21 = 32
+    rows_32_21 = 21
+    width_32_21 = cols_32_21 * 8 => 256
+    height_32_21 = rows_32_21 * 9 => 189
+    total_visible_pixels_32_21 = width_32_21 * height_32_21 => 48,384
+    border_width_32_21 = (vga_width/2) - width_32_21 => 64
+    border_height_32_21 = (vga_height/2) - height_32_21 => 51
+    border_pixels_32_21 = (border_width_32_21 * height_32_21) + ((vga_width/2) * border_height_32_21) => 28,416
+    
+This all means that we have `48384`  pixels for which we need to read memory. However, due to the way memory is structured, we can read 8 characters at once — so we only need 3 memory access to read the characters, foreground and background colors. We need one additional memory read to read the eight bytes that make up the character tile. This means it requires 4 memory reads in total *per* each eight characters, or _per_ each `64` pixels. Because this mode is pixel-doubled, we really are able to make four memory reads count for 128 visible pixels on the screen.
+
+    avg_pixel_read_32_21 = (read_byte_time * 4) / 128 => 6.92 ns/MHz
+    visible_pixel_read_32_21 = total_visible_pixels_32_21 * avg_pixel_read_32_21 => 334,966.15 ns/MHz
+    ns_per_frame - visible_pixel_read_32_21 => 16,348,251.32 ns/MHz
+
+Per line, we would have 20 memory reads, for a total of 7560 reads `(378 * 5 * 4)`.
+
+### 32x24(8 high) layer
+
+    cols_32_24 = 32
+    rows_32_24 = 24
+    width_32_24 = cols_32_24 * 8 => 256
+    height_32_24 = rows_32_24 * 8 => 192
+    total_visible_pixels_32_24 = width_32_24 * height_32_24 => 49,152
+    border_width_32_24 = (vga_width/2) - width_32_24 => 64
+    border_height_32_24 = (vga_height/2) - height_32_24 => 48
+    border_pixels_32_24 = (border_width_32_24 * height_32_24) + ((vga_width/2) * border_height_32_24) => 27,648
+    avg_pixel_read_32_24 = (read_byte_time * 4) / 128 => 6.92 ns/MHz
+    visible_pixel_read_32_24 = total_visible_pixels_32_24 * avg_pixel_read_32_24 => 340,283.08 ns/MHz
+    ns_per_frame - visible_pixel_read_32_24 => 16,342,934.4 ns/MHz
+
+Here we'd have additional memory reads due to the additional lines: 7680 in total
+
+### 64x42(9 high) layer
+
+    cols_64_42 = 64
+    rows_64_42 = 42
+    width_64_42 = cols_64_42 * 8 => 512
+    height_64_42 = rows_64_42 * 9 => 378
+    total_visible_pixels_64_42 = width_64_42 * height_64_42 => 193,536
+    border_width_64_42 = (vga_width) - width_64_42 => 128
+    border_height_64_42 = (vga_height) - height_64_42 => 102
+    border_pixels_64_42 = (border_width_64_42 * height_64_42) + ((vga_width) * border_height_64_42) => 113,664
+    avg_pixel_read_64_42 = (read_byte_time * 4) / 64 => 13.85 ns/MHz
+    visible_pixel_read_64_42 = total_visible_pixels_64_42 * avg_pixel_read_64_42 => 2,679,729.23 ns/MHz
+    ns_per_frame - visible_pixel_read_64_42 => 14,003,488.25 ns/MHz
+    
+In this mode, we are displaying four times as many characters. We'll be reading 40 times per line, for a total of 378 lines, thus we'll be reading 15,120 times.
+
+### 64x48(8 high) layer
+
+    cols_64_48 = 64
+    rows_64_48 = 48
+    width_64_48 = cols_64_48 * 8 => 512
+    height_64_48 = rows_64_48 * 8 => 384
+    total_visible_pixels_64_48 = width_64_48 * height_64_48 => 196,608
+    border_width_64_48 = (vga_width) - width_64_48 => 128
+    border_height_64_48 = (vga_height) - height_64_48 => 96
+    border_pixels_64_48 = (border_width_64_48 * height_64_48) + ((vga_width) * border_height_64_48) => 110,592
+    avg_pixel_read_64_48 = (read_byte_time * 4) / 64 => 13.85 ns/MHz
+    visible_pixel_read_64_48 = total_visible_pixels_64_48 * avg_pixel_read_64_48 => 2,722,264.62 ns/MHz
+    ns_per_frame - visible_pixel_read_64_48 => 13,960,952.86 ns/MHz
+
+In this mode we are displaying 384 lines with 40 reads each, leading to 15,360 total reads.
+
+### lo-res bitmap graphics layer
+
+In this mode, Retroputer has access to 256 x 192 individual pixels.
+
+    width_lo_res = 256
+    height_lo_res = 192
+    total_visible_pixels_lo_res = width_lo_res * height_lo_res => 49,152
+    border_width_lo_res = (vga_width/2) - width_lo_res => 64
+    border_height_lo_res = (vga_height/2) - height_lo_res => 48
+    border_pixels_lo_res = (border_width_lo_res * height_lo_res) + ((vga_width/2) * border_height_lo_res) => 27,648
+    
+So far things aren't too far off from 32x24 text mode. However we now are reading individual pixels, which means a single read gets eight pixels (whereas before it could be 8 characters, each 8 pixels wide). However, because we're in double-pixel mode, this is effectively 16 pixels worth of data in a single memory read.
+    
+    avg_pixel_read_lo_res = (read_byte_time) / 16 => 13.85 ns/MHz
+    visible_pixel_read_lo_res = total_visible_pixels_lo_res * avg_pixel_read_lo_res => 680,566.15 ns/MHz
+    ns_per_frame - visible_pixel_read_lo_res => 16,002,651.32 ns/MHz
+
+### hi-res bitmap graphics layer
+
+In this mode, Retroputer has access to 512 x 384 individual pixels.
+
+    width_hi_res = 512
+    height_hi_res = 384
+    total_visible_pixels_hi_res = width_hi_res * height_hi_res => 196,608
+    border_width_hi_res = (vga_width) - width_hi_res => 128
+    border_height_hi_res = (vga_height) - height_hi_res => 96
+    border_pixels_hi_res = (border_width_hi_res * height_hi_res) + ((vga_width) * border_height_hi_res) => 110,592
+    
+And now we can only read effectively 8 pixels in a single memory read.
+
+    avg_pixel_read_hi_res = (read_byte_time) / 8 => 27.69 ns/MHz
+    visible_pixel_read_hi_res = total_visible_pixels_hi_res * avg_pixel_read_hi_res => 5,444,529.23 ns/MHz
+    ns_per_frame - visible_pixel_read_hi_res => 11,238,688.25 ns/MHz
+    
+### Sprites
+
+Retroputer sprites are very similar to text mode, except that they can have arbitrary width and height (as multiples of 8), but only 64 bytes. So you can have 16x4, 8x8, 4x16, but not 16x16. 
+
+- `base+0x00` is the tile
+- `base+0x40` is the foreground color
+- `base+0x80` is the background color
+- `tile+char*64` is the tile data
+
+This means that a sprite requires four memory reads, but the geometry of the sprite determines how effective these reads are. If the sprite is narrow and tall, the timing is 4 reads for 8 pixels (at smallest sprite size), whereas if the sprite is wide and short, the timing can be (at most) 4 reads for 64 pixels (at smallest size). At larger sizes, memory reads technically cover more pixels.
+
+If you had an 8x8 sprite (tiles; 64x64 pixels), however, four reads could handle the entire width of the sprite, and would only occur 64 times, so 256 total memory reads.
+
+    avg_sprite_time = 8 * 8 * read_byte_time * 4 => 56,713.85 ns/MHz
+
+
+### Compositing
+
+Retroputer supports a background layer, four graphics layers, and sixteen sprites. The layers can be text or graphics, and the sprites can be interleaved. Layers can also be repositioned, scaled, and cropped, but for now let's assume the worst possible scenario -- all four layers are active, each layer is hi res, and all sixteen sprites are active with 8x8 sizes.
+
+    ns_per_frame - ((visible_pixel_read_hi_res * 4) + (avg_sprite_time * 16)) => -6,002,320.98 ns/MHz
+    
+In this configuration, we're well over budget for a 60fps rendering, but we *could* still have room for 30fps. In reality, though, this would be an unusual configuration. Instead, you'd usually have a couple of text layers, at most one bitmap layer, and all sprites visible. In this configuration:
+
+    ns_per_frame - ((visible_pixel_read_hi_res + visible_pixel_read_64_48*2) + (avg_sprite_time * 16)) => 4,886,737.48 ns/MHz
+
+And if we we used lo-res and 32x24 tiles, the timings are even better
+
+    ns_per_frame - ((visible_pixel_read_lo_res + visible_pixel_read_32_24*2) + (avg_sprite_time * 16)) => 14,414,663.63 ns/MHz
+
+This means that only in the most pathological cases are we constrained by memory when targeting 60fps.
+
+### Writing to framebuffer
+
+None of the above factors in the time required to write to memory.
+
+    fb_width = 640
+    fb_height = 480
+    fb_total = fb_width * fb_height => 307,200
+    fb_total_K = fb_total / 1024 => 300
+    fb_borderless_width = 512
+    fb_borderless_height = 384
+    fb_borderless_total = fb_borderless_width * fb_borderless_height => 196,608
+    fb_borderless_K = fb_borderless_total / 1024 => 192
+
+This... is a lot of memory required. If it is writing to DDR3 ram, then we will have some timings similar to reading the hi res display due to the fact that we can write eight pixels at once.
+
+    ddr_write_time = fb_borderless_total * read_byte_time / 8 => 5,444,529.23 ns/MHz
+    
+If we then had to read from DDR to generate the video display, we'd incur yet another similar hit -- resulting in 60fps being very dificult to hit, and tying up the memory controller, leaving very little time for the CPU to render. Even in the best case, the CPU would only run 30% for every frame (targeting 60fps)
+
+Instead, if the frame buffer is written to block ram, our timing is much nicer, and doesn't block the CPU from using system RAM. However it means we need a VERY large amount of block ram -- 192K. 
+
+    bram_write_time = fb_borderless_total * (ns_per_cpu_clock) => 2,419,790.77 ns/MHz
+
+If we only rendered 256x192 on the final output, we can get by with 48K.
+
+### Generating display
+
+We would read from frame buffer and then index into the palette BRAM. This palette BRAM (4K) can be manipulated using I/O commands from the developer. The timing of block ram should be more than fast enough to handle transmitting 24-bit color. 
+
+## Serial Requirements
+
+Our serial port runs at 812500 baud, which should provide ~81250 bytes per second.
+
+    bytes_per_frame = 256 * 192=> 49,152
+    color_per_frame = bytes_per_frame * 3 => 147,456
+    palette = 4 * 256 => 1,024
+    
