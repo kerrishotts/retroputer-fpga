@@ -38,7 +38,7 @@ module au_top (
   
   clk_wiz_0 clk_wiz;
 
-  rom rom;
+  //rom rom;
   // DDR3 Interface - connect inouts directly
   mig_wrapper mig (.ddr3_dq(ddr3_dq), .ddr3_dqs_n(ddr3_dqs_n), .ddr3_dqs_p(ddr3_dqs_p) );
   
@@ -54,13 +54,14 @@ module au_top (
 
     edge_detector down_edge_detector(#RISE(1), #FALL(0)); // detect rising edges
     button_conditioner down_button_cond;     // button input conditioner
-        
+    
+    system_rom rom;
     .rst(rst) {
       cpu cpu;
       ddr_arbiter mem_arbiter(#DEVICES(2));
       //lru_cache cache(#ENTRIES(1), #WORD_SIZE(16), #AGE_BITS(1));
       system_ram cache;
-      fsm state = { RUN_CPU, WAIT_MEM_READ, WAIT_MEM_WRITE, WAIT_IO_READ, WAIT_IO_READ_RDY, WAIT_IO_WRITE_RDY, MEM_FLUSH_CACHE };
+      fsm state = { RUN_CPU, WAIT_MEM_READ, WAIT_MEM_WRITE, WAIT_IO_READ, WAIT_IO_READ_RDY, WAIT_IO_WRITE_RDY, MEM_FLUSH_CACHE, MEM_READ_ROM_1, MEM_READ_ROM_2 };
       //fsm regint = { RUN, WAIT_READ, READ_IO };
       multi_seven_seg seg;
       
@@ -198,6 +199,7 @@ module au_top (
 
     led = c{1b0, io_button[0], io_button[1], io_button[2], io_button[3], hideROM, dbe, rst};
     
+    rom.write_en = 0;
     rom.addr = cpu.address[15:0]; // rom can be wired up to the lower 16 bits on the address line by default
     
     io_led = 3x{{8h00}};    // turn LEDs off
@@ -218,7 +220,9 @@ module au_top (
         
         // show memory address on LEDs
         io_led = {c{cache.rd_ready, cache.rd_data_valid, cache.wr_ready, iobus.bus_out.rdy, iobus.bus_out.irq_service, 
-                    cpu.address[18:16]}, cpu.address[15:8], cpu.address[7:0]};
+                    /*cpu.address[18:16]}, cpu.address[15:8], cpu.address[7:0]};*/
+            mig.mem_out.rdy, mig.mem_out.wr_rdy, mig.mem_out.rd_valid}, 
+            c{mem_arbiter.master_in.en, mem_arbiter.master_in.wr_en, mem_arbiter.master_in.cmd, 3b0}, mig.mem_out.rd_data[7:0]};
         
         case (reg_select.q) {
           4hC: seg.values = {cpu.dbg_clocks[31:28], cpu.dbg_clocks[27:24], cpu.dbg_clocks[23:20], cpu.dbg_clocks[19:16]};
@@ -266,8 +270,7 @@ module au_top (
         cpu.ready = 1;
         if (cpu.d_read) {                    // CPU is requesting to read data from memory;
           if (&cpu.address[18:16] && !hideROM) {  // if the address is in bank 7 (111_xxxxxxxx_xxxxxxxx)
-            cpu.d_in = rom.out;              // get the byte from ROM and give it to the CPU
-            cpu.d_rdy = 1;                   // signal the CPU that it has data
+            state.d = state.MEM_READ_ROM_1;
           } else {
             if (cache.rd_ready) {            // otherwise it's asking to read from RAM... but that takes time
               cache.rd_cmd_valid = 1;        // ... ask cache to read from address
@@ -300,6 +303,13 @@ module au_top (
           tmp_d_out.d = c{8b0,cpu.io_out};
           state.d = state.WAIT_IO_WRITE_RDY;
         }
+      state.MEM_READ_ROM_1:
+        state.d = state.MEM_READ_ROM_2;
+      state.MEM_READ_ROM_2:
+        cpu.ready = 1;
+        cpu.d_in = rom.data;              // get the byte from ROM and give it to the CPU
+        cpu.d_rdy = 1;                   // signal the CPU that it has data
+        state.d = state.RUN_CPU;
       state.WAIT_MEM_READ:                   // Waiting for data from RAM
         if (cache.rd_data_valid) {           // If data is available
           cpu.ready = 1;                     // ... CPU can run 

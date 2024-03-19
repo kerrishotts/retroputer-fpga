@@ -19,10 +19,18 @@ module system_ram(
   ) {
 
   .clk(clk), .rst(rst) {
-    fsm state = { IDLE, WRITE_CMD, READ_CMD, READ_WAIT, READ_VALID };
+    fsm state = { IDLE, WRITE_WAIT, WRITE_CMD, READ_CMD, READ_WAIT, READ_CACHE, READ_VALID };
     dff addr[28];
+    dff orig_wr_addr[19];
     dff orig_rd_addr[19];
     dff read_data[8];
+    dff write_data[8];
+    
+    //dff write_delay[6];
+    
+    dff cache_data[128];
+    dff cache_addr[16];
+    dff cache_valid;
   }
   
   sig word[16];
@@ -31,13 +39,14 @@ module system_ram(
   
     mem_in.en = 0;
     mem_in.cmd = 3bx;
-    mem_in.addr = addr.q;
+    //mem_in.addr = addr.q;
+    mem_in.addr = 28bx;
     mem_in.wr_en = 0;
-    mem_in.wr_data = 8x{c{wr_data, 8b0}};
+    mem_in.wr_data = 128bx;
     mem_in.wr_mask = 128hFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
-    mem_in.wr_mask[ wr_addr[2:0] * 2 +:2 ] = 2b0;
+    mem_in.wr_mask[ orig_wr_addr.q[2:0] * 2 +:2 ] = 2b0;
     
-    wr_ready = state.q == state.IDLE;
+    wr_ready = state.q == state.IDLE; // should this also include mem_out.wr_rdy?
     rd_ready = state.q == state.IDLE;
     
     rd_data = 8bx; // word[15:8];
@@ -46,32 +55,61 @@ module system_ram(
     case (state.q) {
       state.IDLE: 
         if (wr_valid) {
-          mem_in.wr_en = 1;
+          //mem_in.wr_en = 1;
           addr.d = c{9b0, wr_addr[18:3], 3b0};
-          if (mem_out.wr_rdy)
+         // orig_wr_addr.d = wr_addr;
+          /*if (mem_out.wr_rdy) {
+            if (cache_valid.q && wr_addr[18:3] == cache_addr.q) {
+              cache_data.d[ wr_addr[2:0]*16 +: 16] = c{wr_data, 8b0};
+            }
             state.d = state.WRITE_CMD;
+          } else {*/
+            orig_wr_addr.d = wr_addr;
+            state.d = state.WRITE_WAIT;
+            write_data.d = wr_data;
+          //}
         }
         if (rd_cmd_valid) {
           addr.d = c{9b0, rd_addr[18:3], 3b0};
           orig_rd_addr.d = rd_addr;
-          state.d = state.READ_CMD;
+          state.d = (cache_valid.q && cache_addr.q == rd_addr[18:3]) ? state.READ_CACHE : state.READ_CMD;
         }
+      state.WRITE_WAIT:
+          mem_in.wr_en = 1;
+          mem_in.wr_data = 8x{c{write_data.q, 8b0}};
+          if (mem_out.wr_rdy) {
+            if (cache_valid.q && orig_wr_addr.q[18:3] == cache_addr.q) {
+              cache_data.d[ orig_wr_addr.q[2:0]*16 +: 16] = c{write_data.q, 8b0};
+            }
+            state.d = state.WRITE_CMD;
+          }
       state.WRITE_CMD:
         mem_in.en = 1;
         mem_in.cmd = 0; // write;
-        if (mem_out.rdy)
+        mem_in.addr = addr.q;
+        if (mem_out.rdy) { //but are we actually written?
           state.d = state.IDLE;
+        }
       state.READ_CMD:
         mem_in.en = 1;
         mem_in.cmd = 1; // read;
+        mem_in.addr = addr.q;
         if (mem_out.rdy) 
           state.d = state.READ_WAIT;
       state.READ_WAIT: 
         if (mem_out.rd_valid) {
-          word = mem_out.rd_data[ orig_rd_addr.q[2:0]*16 +:16 ];
-          read_data.d = word[15:8];
-          state.d = state.READ_VALID;
+          cache_data.d = mem_out.rd_data;
+          cache_valid.d = 1;
+          cache_addr.d = orig_rd_addr.q[18:3];
+//          word = mem_out.rd_data[ orig_rd_addr.q[2:0]*16 +:16 ];
+//          read_data.d = word[15:8];
+//          state.d = state.READ_VALID;
+          state.d = state.READ_CACHE;
         }
+      state.READ_CACHE:
+        word = cache_data.q[orig_rd_addr.q[2:0]*16 +:16 ];
+        read_data.d = word[15:8];
+        state.d = state.READ_VALID;
       state.READ_VALID:
         state.d = state.IDLE;
         rd_data = read_data.q;
