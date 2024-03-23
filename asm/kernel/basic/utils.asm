@@ -4,6 +4,7 @@
         push d
     _main:
         clr EX
+    brs _out # TODO: REMOVE WHEN NOT USING SERIAL PORT
         in dl, 0x38                                         # Check for CTRL+C
         test dl, 0b0000_1000
         if !z {                                             # Got CTRL

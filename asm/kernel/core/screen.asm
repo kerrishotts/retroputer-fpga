@@ -553,7 +553,8 @@
             pushf
         _main:
             # do we need to pause for a second?
-            in dl, 0x38                                  # left SHIFT will be here
+            #in dl, 0x38                                  # left SHIFT will be here
+            dl := 0 # TODO: TAKE OUT WHEN NOT USING SERIAL PORT
             test dl, 0b0000_0001                         # only care about left SHIFT
             if !z {                                      # ZERO will be unset if pressed
                 push c
@@ -978,6 +979,7 @@
             push y
             pushf
         _main:
+                    call lput-char
 
             al := dl                                        # char in
             bl := [screen.kdata.print-mode]                 # mode
@@ -1052,14 +1054,17 @@
         get-char: {
                 pushf
             _main:
-                in dl, 0x30                                 # check if we have characters in the queue
+                in dl, 0x82
+                #in dl, 0x30                                 # check if we have characters in the queue
                 cmp dl, 0                                   # if we do, return it immediately, otherwise
                 if z {                                      # wait until we have something
                     do {                                    # why? this makes pasting / emptying the
-                        halt                                # keyboard buffer faster; halt means we wait
-                        in dl, 0x30                         # at least a frame, so we can only consume
+                        #halt                                # keyboard buffer faster; halt means we wait
+                        in dl, 0x82
+                        #in dl, 0x30                         # at least a frame, so we can only consume
                         cmp dl, 0                           # the keyboard buffer at a slow speed. If
                     } while z                               # we check first, we can consume it quickly.
+                    #halt
                 }
             _out:
                 popf
@@ -1077,7 +1082,6 @@
                 pushf
                 push a
             _main:
-                halt
             _wait:
                 in al, 0x84                     # if !Z, we can write
                 cmp al, 0x00
@@ -1105,7 +1109,6 @@
                 while !z do {
                     swap a, d
                     call put-char
-                    call lput-char
                     swap a, d
                     inc x
                     al := [d, x]
@@ -1163,6 +1166,8 @@
             _loop:
                 call get-char                               # get user input
                 cmp dl, 13                                  # wait for ENTER 
+                br z _done
+                cmp dl, 10                                  # or LINE FEED
                 br z _done
                 call put-char                               # print any output
                 cmp dl, 34                                  # is it a quote? If so, switch modes
