@@ -1,3 +1,17 @@
+global MemoryAccess {
+  struct in {
+    address[19],             // address 
+    d_read,                  // read request
+    d_write,                 // write request
+    d_in[8]                  // data to write
+  }
+  struct out {
+    busy,                    // if busy, no requests accepted; can be used to pause other devices as needed
+    d_rdy,                   // if set, data in d_out is ready
+    d_out[8]                 // data read 
+  }
+}
+
 module memory_controller (
     input clk,  // clock
     input rst,  // reset
@@ -5,95 +19,92 @@ module memory_controller (
     input rom_en,           // if ROM is enabled, route read requests to RAM
     input shadow_wr_en,     // if shadow write enable is set, we can write to the RAM behind the ROM
 
-    output busy,            // feed to READY or ENABLE to other devices to pause them as needed
-    input address[19],      // address (for both read & write)
-    input d_read,           // read request
-    input d_write,          // write request
-    input d_in[8],          // data in (for write)
-    output d_rdy,           // signals when data is ready (after READ)
-    output d_out[8],        // data out (for reads)
+    output <MemoryAccess.out> out,
+    input <MemoryAccess.in> in,
     
+    input<Memory.out> mem_out,
+    output<Memory.in> mem_in,
     
-    /* system ram */
-    output sram_rd_addr[19],
-    output sram_rd_cmd_valid,
-    input  sram_rd_ready,
-    input  sram_rd_data[8],
-    input  sram_rd_data_valid,
-    
-    output sram_wr_addr[19],
-    output sram_wr_data[8],
-    output sram_wr_valid,
-    input  sram_wr_ready,
-    
-    /* system rom */
-    
-    output srom_addr[16],
-    input  srom_data[8]
+    output sram_wr_ready,
+    output sram_rd_ready
     
   ) {
+  
 
-  .clk(clk), .rst(rst) {
-    fsm state = { IDLE, READ, WRITE };
-    dff latch_address[19];
-    dff latch_d_in[8];
-    dff rom_read_rdy[2];
+  .clk(clk) {
+    system_rom rom;
+  
+    .rst(rst) {
+      system_ram ram;
+      fsm state = { IDLE, READ, WRITE };
+      dff latch_address[19];
+      dff latch_d_in[8];
+      dff rom_read_rdy[2];
+    }
   }
   
   sig read_rom;
   
   always {
-    busy = state.q == state.IDLE;
+  
+    ram.mem_out = mem_out;
+    mem_in = ram.mem_in;
+    rom.write_en = 0;
+    
+    sram_wr_ready = ram.wr_ready;
+    sram_rd_ready = ram.rd_ready;
+    
+    out.busy = state.q != state.IDLE;
     
     read_rom = &latch_address.q[18:16] && rom_en;
     
-    d_rdy = 0;
-    d_out = 8bx;
-    sram_rd_addr = 19bx;
-    sram_rd_cmd_valid = 0;
-    sram_wr_addr = 19bx;
-    sram_wr_data = 8bx;
-    sram_wr_valid = 0;
-    srom_addr = 16bx;
+    out.d_rdy = 0;
+    out.d_out = 8bx;
+    ram.rd_addr = 19bx;
+    ram.rd_cmd_valid = 0;
+    ram.wr_addr = 19bx;
+    ram.wr_data = 8bx;
+    ram.wr_valid = 0;
+    rom.addr = 16bx;
     
     case(state.q) {
       state.IDLE:
-        latch_address.d = address;
-        latch_d_in.d = d_in;
-        if (d_read) state.d = state.READ;
-        if (d_write) {
+        latch_address.d = in.address;
+        latch_d_in.d = in.d_in;
+        if (in.d_read) state.d = state.READ;
+        if (in.d_write) {
           state.d = state.WRITE;
-          if (&address[18:16] && !shadow_wr_en) state.d = state.IDLE; /* writing to shadow RAM disabled */
+          if (&in.address[18:16] && !shadow_wr_en) state.d = state.IDLE; /* writing to shadow RAM disabled */
         }
       state.READ:
         case(read_rom) {
           1b1: // read from ROM
-            srom_addr = latch_address.q[15:0];
-            rom_read_rdy.d = rom_read_rdy.q+1;  // ROM is readable after 1 clock; so toggle the read readiness (we start with NOT ready)
+            rom.addr = latch_address.q[15:0];
+            rom_read_rdy.d = rom_read_rdy.q+1;  // ROM is readable after 2 clocks
             if (rom_read_rdy.q[1]) {
-              busy  = 0;
-              d_out = srom_data;
-              d_rdy = 1;
+              out.busy  = 0;
+              out.d_out = rom.data;
+              out.d_rdy = 1;
               state.d = state.IDLE;
               rom_read_rdy.d = 0;
             }
           1b0: // read from RAM
-            if (sram_rd_ready) {
-              sram_rd_cmd_valid = 1;
-              sram_rd_addr = latch_address.q;
+            if (ram.rd_ready) {
+              ram.rd_cmd_valid = 1;
+              ram.rd_addr = latch_address.q;
             }
-            if (sram_rd_data_valid) {
-              busy  = 0;
-              d_out = sram_rd_data;
-              d_rdy = 1;
+            if (ram.rd_data_valid) {
+              out.busy  = 0;
+              out.d_out = ram.rd_data;
+              out.d_rdy = 1;
               state.d = state.IDLE;
             }
         }
       state.WRITE:
-        if (sram_wr_ready) {
-          sram_wr_addr = latch_address.q;
-          sram_wr_data = latch_d_in.q;
-          sram_wr_valid = 1;
+        if (ram.wr_ready) {
+          ram.wr_addr = latch_address.q;
+          ram.wr_data = latch_d_in.q;
+          ram.wr_valid = 1;
           state.d = state.IDLE;
         }
     }

@@ -1,0 +1,78 @@
+/*
+   Memory Arbiter
+   
+   Arbitrates the access to Retroputer's system memory (including RAM and ROM). Each device added
+   has a priority -- the lower the device number, the higher the priority. If the highest priority 
+   device continuously requests reads or writes, lower priority devices may be starved, as they'll 
+   never get an opportunity to read or write to memory. 
+   
+   Due this, devices that will always read or write to memory but that aren't timing-sensitive should 
+   be lower priority than devices that are sensitive to timing or bandwidth. 
+   
+   Example ordering:
+   - DEVICE 0: Video Graphics Generator (sensitive to timing; requires consistent bandwidth)
+   - DEVICE 1: DMA
+   - DEVICE 2: Serial Debugger 
+   - DEVICE 3: CPU
+ */
+
+module memory_arbiter #(
+  DEVICES = 4 : DEVICES > 1
+) (
+    input clk,  // clock
+    input rst,  // reset
+    
+    output<MemoryAccess.in> master_in,
+    input<MemoryAccess.out> master_out,
+    
+    input<MemoryAccess.in> device_in[DEVICES],
+    output<MemoryAccess.out> device_out[DEVICES]
+  ) {
+  
+  .clk (clk), .rst (rst) {
+//    fifo fifo(#SIZE($clog2(DEVICES)), #DEPTH(256));
+    fsm state = { IDLE, WAIT_READ, WAIT_WRITE };
+    dff device[$clog2(DEVICES)];
+  }
+  
+  var i, act;
+
+  always {
+  
+//    fifo.rget = 0;
+//    fifo.wput = 0;
+//    fifo.din = bx;
+  
+    master_in.address = bx;
+    master_in.d_read = 0;
+    master_in.d_write = 0;
+    master_in.d_in = bx;
+    
+    for (i = 0; i < DEVICES; i++) {
+      device_out[i].busy = master_out.busy;
+      device_out[i].d_rdy = 0;
+    }
+    
+    case (state.q) {
+      state.IDLE:
+        act = 0;
+        for (i = 0; i < DEVICES; i++) {
+          if ((device_in[i].d_read || device_in[i].d_write) && !act) {
+            act = 1;
+            device.d = i;
+            master_in = device_in[i];
+            device_out[i] = master_out;
+            if (device_in[i].d_read && !master_out.d_rdy) {
+              state.d = state.WAIT_READ;
+            }
+          }
+        }
+        
+      state.WAIT_READ:
+        master_in = device_in[device.q];
+        device_out[device.q] = master_out;       
+        if (master_out.d_rdy) state.d = state.IDLE;
+    }
+    
+  }
+}
