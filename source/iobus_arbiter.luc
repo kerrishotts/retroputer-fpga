@@ -1,0 +1,74 @@
+module iobus_arbiter #(
+  DEVICES = 4 : DEVICES > 1
+) (
+    input clk,  // clock
+    input rst,  // reset
+    
+    output <IoInterface.in> master_in,
+    input <IoInterface.out> master_out,
+    
+    input <IoInterface.in> device_in[DEVICES],
+    output <IoInterface.out> device_out[DEVICES]
+    
+  ) {
+  
+  .clk (clk), .rst (rst) {
+    fsm state = { IDLE, WAIT_READ, WAIT_WRITE };
+    dff device[$clog2(DEVICES)];
+  }
+  
+  var i, act;
+  always {
+  
+    master_in.addr = bx;
+    master_in.en = bx;
+    master_in.read = 0;
+    master_in.write = 0;
+    master_in.wr_data = bx;
+    master_in.irq_ack = 0;
+    
+    for (i = 0; i < DEVICES; i++) {
+      device_out[i].rdy = master_out.rdy;
+      device_out[i].rd_valid = 0;
+      device_out[i].wr_valid = 0;
+      device_out[i].irq = master_out.irq;
+      device_out[i].irq_service = master_out.irq_service;
+      device_out[i].timeout = master_out.timeout;      
+    }
+        
+    case (state.q) {
+      state.IDLE:
+        act = 0;
+        for (i = 0; i < DEVICES; i++) {
+          if (device_in[i].irq_ack)
+            master_in.irq_ack = 1;
+            
+          if ((device_in[i].read || device_in[i].write) && !act) {
+            act = 1;
+            device.d = i;
+            master_in = device_in[i];
+            device_out[i] = master_out;
+            if (device_in[i].read && !master_out.rd_valid) {
+              state.d = state.WAIT_READ;
+            }
+            if (device_in[i].write && !master_out.wr_valid) {
+              state.d = state.WAIT_WRITE;
+            }
+          }
+        }
+      state.WAIT_READ:
+        master_in = device_in[device.q];
+        device_out[device.q] = master_out;
+        if (master_out.rd_valid)
+          state.d = state.IDLE;
+      
+      state.WAIT_WRITE:        
+        master_in = device_in[device.q];
+        device_out[device.q] = master_out;
+        if (master_out.wr_valid)
+          state.d = state.IDLE;
+      
+    }
+    
+  }
+}
