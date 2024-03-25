@@ -41,6 +41,7 @@ module cpu (
     output d_read,       // request read from memory
     input  d_rdy,        // if 1, data is ready to be read 
     output d_write,      // request write to memory
+    input io_busy,       // if high, can't read or write to bus
     input io_in[8],      // I/O data in 
     output io_out[8],    // I/O data out 
     output io_read,
@@ -176,7 +177,7 @@ module cpu (
     
     dbg_reg = reg.q;
     dbg_inst = c{inst.q[0], inst.q[1], inst.q[2], inst.q[3]};
-    dbg_clocks = c{cpu_clocks_hold.q, inst_clocks_hold.q};
+    dbg_clocks = c{cpu_clocks_hold.q, inst_clocks_hold.q[7:0], is_step_2.q, 2b0, state.q };
     if (dbg_reg_write) {
       reg.d[dbg_reg_sel] = dbg_reg_data;
     }
@@ -520,21 +521,40 @@ module cpu (
         state.IN:  
             destReg = inst.q[1][7:5];
             destRegSize = inst.q[1][4];
-            io_read = ~io_rdy;
-            port = inst.q[2]; 
-            if (io_timeout) reg.d[Reg.IRQ_FLAGS][7] = 1; // set EXception when IO times out
-            if (io_rdy) {
-              if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = io_in;
-              else             /* WORD */ reg.d[destReg] = c{8h00, io_in};
-              state.d = state.NEXT;
+          
+            if (is_step_2.q == 0) {
+              if (!io_busy) {
+                io_read = 1;
+                port = inst.q[2];
+                is_step_2.d = 1;
+              }
+            } else {
+              if (io_timeout) reg.d[Reg.IRQ_FLAGS][7] = 1; // set EXception when IO times out
+              if (io_rdy) {
+                if (destRegSize) /* BYTE */ reg.d[destReg][7:0] = io_in;
+                else             /* WORD */ reg.d[destReg] = c{8h00, io_in};
+                state.d = state.NEXT;
+                is_step_2.d = 0;
+              }
             }
+
         state.OUT:
             srceReg = inst.q[1][7:5];
             srceRegSize = inst.q[1][4];
-            io_out = reg.q[srceReg][7:0];
-            io_write = 1;
-            port = inst.q[2];
-            state.d = state.NEXT;
+            if (is_step_2.q == 0) {
+              if (!io_busy) {
+                io_out = reg.q[srceReg][7:0];
+                io_write = 1;
+                port = inst.q[2];
+                is_step_2.d = 1;
+              }
+            } else {
+              if (io_timeout) reg.d[Reg.IRQ_FLAGS][7] = 1; // set EXception when IO times out
+              if (!io_busy) {
+                state.d = state.NEXT;
+                is_step_2.d = 0;
+              }
+            }
         state.ENTER:  
             target_reg.d = Reg.BP;
             target_reg_size.d = AluSize.WORD;
