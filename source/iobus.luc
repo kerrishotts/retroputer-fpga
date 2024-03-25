@@ -93,6 +93,7 @@ module iobus (
         device_in.wr_data = temp.q.wr_data;
         device_in.addr = temp.q.addr;
         if (|device_out.wr_valid) state.d = state.WAIT;
+        timeout.d = timeout.q - 1;
         if (timeout.q == 0) state.d = state.TIMEOUT;
       state.WAIT:
         state.d = state.READY;
